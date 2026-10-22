@@ -11,13 +11,6 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 PY="${1:?usage: fix-python-env.sh /path/to/python}"
 [ -x "$PY" ] || { echo "Not an executable: $PY" >&2; exit 2; }
 
-case "$(rem_realpath "$PY")" in
-  /usr/bin/*|/usr/lib/*|/System/*|/Library/Developer/*|/Applications/Xcode.app/*)
-    echo "SKIP: $PY belongs to the operating system and must not be modified. Its pip uses the system trust store, which the admin script fixes."
-    echo "If the check reported certifi in your own user site-packages, use the OS-owned Python recipe in fix-recipes instead."
-    exit 3 ;;
-esac
-
 info="$("$PY" - <<'PY'
 import sys, sysconfig, os, glob
 def ver(mod):
@@ -36,13 +29,27 @@ def installer(mod):
     return ""
 managed = os.path.exists(os.path.join(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED")) and sys.prefix == sys.base_prefix
 conda = os.path.isdir(os.path.join(sys.prefix, "conda-meta"))
-print("%d.%d|%s|%s|%s|%s|%s|%s|%s" % (sys.version_info[0], sys.version_info[1], ver("pip"), ver("certifi"),
-      "managed" if managed else "free", "conda" if conda else "", sys.prefix, installer("pip"), installer("certifi")))
+# A virtualenv's python is often a link to the OS python, but its packages are its own.
+venv = hasattr(sys, "real_prefix") or sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+print("%d.%d|%s|%s|%s|%s|%s|%s|%s|%s" % (sys.version_info[0], sys.version_info[1], ver("pip"), ver("certifi"),
+      "managed" if managed else "free", "conda" if conda else "", sys.prefix, installer("pip"), installer("certifi"),
+      "venv" if venv else ""))
 PY
 )"
-IFS='|' read -r pyver old_pip old_certifi managed conda prefix pip_inst certifi_inst <<EOF
+IFS='|' read -r pyver old_pip old_certifi managed conda prefix pip_inst certifi_inst venv <<EOF
 $info
 EOF
+
+# The OS's own Python: decided by its prefix, not by where its symlink points, because a virtualenv made
+# with the OS python links to it but is the user's to fix.
+if [ -z "$venv" ]; then
+  case "$prefix" in
+    /usr|/System/*|/Library/Developer/*|/Applications/Xcode*.app/*)
+      echo "SKIP: $PY belongs to the operating system and must not be modified. Its pip uses the system trust store, which the admin script fixes."
+      echo "If the check reported certifi in your own user site-packages, use the OS-owned Python recipe in fix-recipes instead."
+      exit 3 ;;
+  esac
+fi
 QPY="$(rem_q "$PY")"
 
 major="${pyver%%.*}"; minor="${pyver#*.}"
