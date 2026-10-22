@@ -62,6 +62,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Syntax under the stock bash 3.2 (macOS)
+        if: runner.os == 'macOS'
+        run: for f in "$SKILL"/scripts/*.sh tools/*.sh; do /bin/bash -n "$f"; done
       - name: Run check.sh
         env:
           REMEDIATE_EMUDHRA_STATE_DIR: ${{ runner.temp }}/state

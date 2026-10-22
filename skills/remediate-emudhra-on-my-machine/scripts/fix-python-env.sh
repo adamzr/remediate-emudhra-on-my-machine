@@ -29,7 +29,7 @@ def installer(mod):
     return ""
 managed = os.path.exists(os.path.join(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED")) and sys.prefix == sys.base_prefix
 conda = os.path.isdir(os.path.join(sys.prefix, "conda-meta"))
-# A virtualenv's python is often a link to the OS python, but its packages are its own.
+# A virtualenv python is often a link to the OS python, but its packages are its own.
 venv = hasattr(sys, "real_prefix") or sys.prefix != getattr(sys, "base_prefix", sys.prefix)
 print("%d.%d|%s|%s|%s|%s|%s|%s|%s|%s" % (sys.version_info[0], sys.version_info[1], ver("pip"), ver("certifi"),
       "managed" if managed else "free", "conda" if conda else "", sys.prefix, installer("pip"), installer("certifi"),

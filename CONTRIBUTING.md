@@ -21,7 +21,7 @@ tools/validate_skill.py   repository checks, run in CI
 
 ## Rules for scripts
 
-- **Portability.** Bash scripts must run on stock macOS bash 3.2 and on GNU/Linux, with BSD and GNU userland alike (no `sed -i` without a suffix, no `grep -P`, no `readlink -f` without a fallback). PowerShell scripts must run on Windows PowerShell 5.1.
+- **Portability.** Bash scripts must run on stock macOS bash 3.2 and on GNU/Linux, with BSD and GNU userland alike (no `sed -i` without a suffix, no `grep -P`, no `readlink -f` without a fallback). PowerShell scripts must run on Windows PowerShell 5.1. Run `/bin/bash -n` on macOS before you push: bash 3.2 still matches quotes inside a heredoc that sits in `$(...)`, so an apostrophe in an embedded Python comment is a syntax error there and nowhere else.
 - **The check is read-only.** `check.sh` and `check.ps1` change nothing except their report in the state folder. They never report PASS when a result could not be determined; use WARN, or `FAIL|network` when offline.
 - **Admin scripts are run by the user, never by the agent.** They ask for `sudo` only where needed, refuse to run as root, and support `--dry-run`.
 - **Every change is backed up and logged with an exact undo command**, using `rem_backup`, `rem_restore_cmd`, and `rem_log` (`Backup-RemFile` and `Write-RemLog` on Windows).
