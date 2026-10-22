@@ -1,0 +1,40 @@
+name: Bug report
+description: A check gave a wrong result, a script or recipe failed, or a tool was missed.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Before you paste anything, remove usernames, hostnames, home-directory paths, IP addresses, and tokens. Never attach `actions.log`.
+        Security problems in the skill go through the private advisory form instead (see SECURITY.md).
+  - type: input
+    id: os
+    attributes:
+      label: Operating system and version
+      placeholder: macOS 26.7.1, Windows 11 24H2, Ubuntu 24.04, Fedora 44, ...
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent
+      placeholder: Claude Code 2.x, Codex, Cursor, ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Skill version
+      description: The `metadata.version` line in SKILL.md.
+      placeholder: 1.0.0
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: lines
+    attributes:
+      label: Relevant check lines or error text (scrubbed)
+      render: text

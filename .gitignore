@@ -1,0 +1,24 @@
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Reports, backups, and logs from local test runs of the scripts
+.remediate-emudhra/
+*.log
+
+# Tooling
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# Agent-local settings
+.claude/settings.local.json

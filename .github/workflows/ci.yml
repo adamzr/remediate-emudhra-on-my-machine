@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SKILL: skills/remediate-emudhra-on-my-machine
+
+jobs:
+  lint:
+    name: Lint and validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - name: shellcheck
+        run: shellcheck -x -S warning "$SKILL"/scripts/*.sh tools/*.sh
+      - name: bash syntax
+        run: for f in "$SKILL"/scripts/*.sh tools/*.sh; do bash -n "$f"; done
+      - name: PowerShell parse and PSScriptAnalyzer (errors)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bad = 0
+          foreach ($f in @(Get-ChildItem "$env:SKILL/scripts" -Filter *.ps1) + @(Get-ChildItem tools -Filter *.ps1)) {
+            $tokens = $null; $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors) { $bad++; $errors | ForEach-Object { "::error file=$($f.Name)::$($_.Message)" } }
+          }
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -RequiredVersion 1.24.0
+          $findings = @(Invoke-ScriptAnalyzer -Path "$env:SKILL/scripts" -Severity Error) + @(Invoke-ScriptAnalyzer -Path tools -Severity Error)
+          $findings | Format-Table -AutoSize | Out-String | Write-Output
+          if ($bad -or $findings) { exit 1 }
+      - name: Skill rules (tools/validate_skill.py)
+        run: |
+          python -m pip install --quiet pyyaml==6.0.3
+          python tools/validate_skill.py
+      - name: Agent Skills reference validator
+        run: npx --yes skills-ref@0.1.5 validate "$SKILL"
+
+  check-unix:
+    name: Read-only check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run check.sh
+        env:
+          REMEDIATE_EMUDHRA_STATE_DIR: ${{ runner.temp }}/state
+        run: |
+          set -o pipefail
+          bash "$SKILL/scripts/check.sh" | tee "$RUNNER_TEMP/out.txt"
+      - name: Output is well formed and a report was saved
+        run: |
+          if grep -vE '^(PASS|FAIL|WARN|INFO)\|[^|]+\|[^|]*\|' "$RUNNER_TEMP/out.txt" | grep -v '^#'; then
+            echo "::error::lines above are not STATUS|AREA|ITEM|DETAIL"; exit 1
+          fi
+          ls "$RUNNER_TEMP"/state/check-*.txt
+      - name: fix-python-env.sh against throwaway virtualenvs
+        run: bash tools/ci-fix-python.sh
+
+  check-windows:
+    name: Read-only check (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run check.ps1 under Windows PowerShell 5.1
+        shell: powershell
+        env:
+          REMEDIATE_EMUDHRA_STATE_DIR: ${{ runner.temp }}\state
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SKILL\scripts\check.ps1" | Tee-Object -FilePath "$env:RUNNER_TEMP\out.txt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Output is well formed and a report was saved
+        shell: powershell
+        run: |
+          $bad = Get-Content "$env:RUNNER_TEMP\out.txt" | Where-Object { $_ -and $_ -notmatch '^(PASS|FAIL|WARN|INFO)\|[^|]+\|[^|]*\|' -and $_ -notmatch '^#' }
+          if ($bad) { $bad; Write-Output '::error::lines above are not STATUS|AREA|ITEM|DETAIL'; exit 1 }
+          Get-ChildItem "$env:RUNNER_TEMP\state\check-*.txt"
+      - name: fix-python-env.ps1 against throwaway virtualenvs
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools\ci-fix-python.ps1
+      - name: Admin script dry run
+        shell: powershell
+        env:
+          REMEDIATE_EMUDHRA_STATE_DIR: ${{ runner.temp }}\state
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SKILL\scripts\admin-fix-windows.ps1" -DryRun
+
+  linux-admin:
+    name: Linux admin script end to end (${{ matrix.image }}${{ matrix.hold && ', package held' || '' }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: debian:stable
+          - image: ubuntu:24.04
+          - image: fedora:latest
+          - image: fedora:latest
+            hold: true
+          - image: rockylinux/rockylinux:9
+            hold: true
+          - image: archlinux:latest
+            hold: true
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fix, check, undo
+        env:
+          HOLD: ${{ matrix.hold && '1' || '0' }}
+        run: bash tools/ci-linux-admin.sh
+
+  install:
+    name: Install with npx skills
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - name: Install into a scratch project
+        run: |
+          mkdir "$RUNNER_TEMP/proj" && cd "$RUNNER_TEMP/proj"
+          npx --yes skills@1.7.4 add "$GITHUB_WORKSPACE" -a claude-code -y
+          d=.claude/skills/remediate-emudhra-on-my-machine
+          test -f "$d/SKILL.md"
+          test -f "$d/scripts/check.sh"
+          test -f "$d/references/fix-recipes.md"
+          test "$(ls "$d"/assets/compromised-intermediates/*.pem | wc -l)" -eq 16
+          if [ -e "$d/README.md" ] || [ -e "$d/.github" ]; then echo "::error::repository files leaked into the skill"; exit 1; fi
+          echo "installed: $(find "$d" -type f | wc -l) files"
