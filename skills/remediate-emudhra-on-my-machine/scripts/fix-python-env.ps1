@@ -128,7 +128,10 @@ if ($oldCertifi -and -not $skipCertifi -and (Test-Old $oldCertifi '2026.10.19'))
 if (-not $py310 -and $oldPip -and (Test-Old $oldPip '26.2.2')) {
     $openMsgs += "pip $oldPip in $Python stays vulnerable: the fixed pip needs Python 3.10 or later (this is $pyver). Retire this environment, or rebuild it on Python 3.10 or later."
 }
-if ($pkgs.Count -eq 0) { Write-Host "Nothing for pip to upgrade in $Python."; Complete-Run 0 }
+if ($pkgs.Count -eq 0) {
+    if ($condaPkgs.Count -eq 0) { Write-Host "Nothing for pip to upgrade in $Python." }
+    Complete-Run 0
+}
 
 Write-Host "Upgrading in $Python with its own pip: $($pkgs -join ' ')"
 Invoke-RemNative $Python (@('-m', 'pip', 'install', '--disable-pip-version-check', '--upgrade') + $pkgs) | Write-Host

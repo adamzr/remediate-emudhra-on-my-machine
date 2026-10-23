@@ -15,7 +15,7 @@ compatibility: >-
   Needs an agent with a shell tool on the computer being fixed. macOS and Linux need bash and curl; Windows
   needs Windows PowerShell 5.1 or later. Network access is required for the live checks.
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
   tags: "security, incident-response, tls, certificates, trust-store, endpoint"
   repository: "https://github.com/adamzr/remediate-emudhra-on-my-machine"
 ---

@@ -2,6 +2,11 @@
 
 All notable changes to this skill are recorded here. Versions follow [semver](https://semver.org) and match `metadata.version` in `SKILL.md`.
 
+## 1.2.1 (October 22, 2026)
+
+- The read-only check no longer runs pipx to find tool environments, because even `pipx environment` writes log files. It reads `PIPX_HOME`, `PIPX_SHARED_LIBS`, and `uv tool dir` instead, with the usual defaults, and resolves each folder once, so no environment is reported twice.
+- In conda environments, the fix script no longer prints "Nothing for pip to upgrade" right before the conda command.
+
 ## 1.2.0 (October 22, 2026)
 
 Follows the incident site, vendor advisories, and distribution errata as of October 22.
