@@ -28,33 +28,55 @@ Before running a recipe, record what it replaces (the old version or old setting
 
 ## Fixed versions
 
-Developer tools are from <https://emudhra.we-have-a-problem.com/> as of October 22, 2026; the site keeps adding fixed releases, so check it when a tool is not listed here. Operating systems are noted separately below the table.
+From <https://emudhra.we-have-a-problem.com/> and the vendors' own advisories, as of October 23, 2026. The site keeps adding fixed releases, so check it when a tool is not listed here.
 
 | Component | Minimum fixed version |
 |---|---|
 | Python certifi | 2026.10.19 |
-| pip | 26.2.2 (needs Python 3.10+) |
+| pip | 26.2.2 (needs Python 3.10+). The check tests older pips live, because pip trusts its own bundled certificates alongside `PIP_CERT` and the system store |
+| conda `ca-certificates` (per environment) | 2026.10.20 on the defaults channel, 2026.10.19 on conda-forge (none for Intel Macs on defaults) |
+| conda | 26.9.4 |
 | Node.js | 22.23.4, 24.22.1, or 26.12.1 (other release lines have no fix) |
-| Go | 1.27.3 or 1.26.10 |
-| uv | 0.13.4 |
+| Go | 1.27.3 or 1.26.10 (programs built with older Go keep the old behavior) |
+| uv | 0.13.4 rejects the test hosts; 0.13.5 also distrusts the compromised keys and ships fixed Pythons (recommended) |
 | Rustup | 1.29.2 |
 | Deno | 2.9.8 |
-| Homebrew ca-certificates | 2026-09-25_1 |
-| Homebrew certifi | 2026.10.19 |
-| Fedora/RHEL `ca-certificates` | 2026.2.92_v9.0.319 |
-| Arch `ca-certificates-mozilla` | 3.131.1-1 |
-| NixOS `cacert` | 3.131.1 |
-| Electron | 44.9.1, 43.8.1, or 42.11.16 (apps update themselves) |
-| Java (OpenJDK, Oracle) | 27.0.1.0.2, 25.0.5.0.2, 21.0.13.0.2, 17.0.21.0.2, 11.0.33.0.2, or 8u511 |
 | Bun | 1.4.4 |
-| conda | 26.9.4 |
 | mise | 2026.10.17 |
 | pixi | 0.82.1 |
+| Git for Windows | 2.56.0.windows.3 |
+| Homebrew ca-certificates | 2026-09-25_1 |
+| Homebrew certifi | 2026.10.19 |
+| MacPorts curl-ca-bundle | 8.23.0_1 (also used by MacPorts git) |
+| Java | 27.0.1.0.2, 25.0.5.0.2, 21.0.13.0.2, 17.0.21.0.2, 11.0.33.0.2, or 8u511 (Oracle and OpenJDK), and Azul's fixed builds. See Java below for which vendors have shipped |
+| CPython | 3.15.1, 3.14.9, or 3.13.17 (they only update the pip that ships with Python; the check warns on older releases of those lines) |
+| Electron | 45.0.0, 44.9.1, 43.8.1, or 42.11.16 (apps update themselves; Slack 4.52.182 ships 44.9.1) |
+| Firefox | 158.0.1, or ESR 153.5.1 or 115.43.1 (Android 158.0.2) |
+| Docker Desktop | 4.96.3 (Docker ships its fix in batches; install each patch release) |
 | Claude Code | 2.1.303 |
-| Docker Desktop | 4.96.2 (the user updates it) |
-| Python (CPython) | 3.15.1, 3.14.9, or 3.13.17 (the check warns on older releases of those lines) |
+| cloudflared | 2026.10.2 (Cloudflare WARP: 2026.8.2115.0) |
+| Azure CLI | no fixed release yet (it bundles an old certifi) |
 
-Operating systems: the incident site says only that Apple has blocked the certificates since October 22, Microsoft since October 20, and Chrome and Firefox since October 17, through automatic updates, and that users should update. Apple has not said which versions carry its block; a separate Apple certificate fix published before this incident ([CVE-2026-86881](https://app.opencve.io/cve/CVE-2026-86881), certificates issued by compromised intermediates) shipped in macOS 15.8, 26.7, and 27 and iOS 26.7 and 27, so recommend those as the target. Google pushed the Android block through Google Play Services on October 20; a restart applies it ([Google](https://blog.google/security/protecting-chrome-and-android-users-from-compromised-emudhra-intermediate-ca-certificates/)). On Linux, the distribution's own `ca-certificates` update is the preferred fix; the admin script installs it first and applies the incident site's workaround only if the system store still trusts a compromised chain afterwards.
+Linux distribution packages (the admin script installs these first, then checks the store):
+
+| Distribution | Fixed `ca-certificates` |
+|---|---|
+| Debian 12 / 13 / unstable | 20250419~deb12u2 / 20250419+deb13u1 / 20260816+nmu1 |
+| Ubuntu 22.04 / 24.04 / 26.04 / 26.10 | 20260816ubuntu0.22.04.1 / .24.04.1 / .26.04.1 / .26.10.1 (USN-8944-1) |
+| Fedora | 2026.2.92_v9.0.319 |
+| RHEL 9 / 10 | 2026.2.92_v9.0.319-90.3.el9_8 (RHSA-2026:88459) / 2026.2.92_v9.0.319-100.3.el10_2 (RHSA-2026:88455) |
+| Oracle Linux 8 / 9 / 10 | 2025.2.80_v9.0.304-80.2.0.1.el8_10 / 2025.2.80_v9.0.305-91.0.1.el9 / 2025.2.80_v9.0.305-102.0.1.el10_2 (numbered below Fedora's, but fixed) |
+| RHEL 8, Alma, Rocky, Amazon Linux | pending; the admin script's workaround applies |
+| Arch `ca-certificates-mozilla` | 3.131.1-1 |
+| Alpine | 20261020-r0 (the admin script does not support Alpine; use the site's commands) |
+| NixOS `cacert` | 3.131.1 is in nixpkgs master only, not yet in a channel, so the `configuration.nix` change is the fix |
+
+Operating systems and phones:
+
+- **Apple** has blocked the certificates since October 22, through background trust data rather than an OS release, so there is no macOS or iOS version to install for it. Its block on the six emSign chains also depends on eMudhra's OCSP server answering, and it failed open while that server was down on October 21 and 22. That is why the macOS admin script's keychain step matters even after Apple's block. A separate Apple certificate fix ([CVE-2026-86881](https://app.opencve.io/cve/CVE-2026-86881)) shipped in macOS 15.8, 26.7, and 27 and iOS 26.7 and 27, so keep recommending those.
+- **Microsoft** has blocked them since October 20 through Windows' automatic untrusted-certificate list. There is no KB, and the block does not show in `certlm.msc`; the check reports when Windows last synced that list.
+- **Google** blocked them in Chrome on October 17 (CRLSet, no update needed) and on Android through Google Play Services on October 19; restarting the phone applies it ([Google](https://blog.google/security/protecting-chrome-and-android-users-from-compromised-emudhra-intermediate-ca-certificates/)). Chrome also removes emSign ECC Root CA - G3 on October 27, which is expected to break some legitimate emSign sites in Chrome.
+- **Mozilla** blocked them in Firefox through OneCRL on October 17; the fixed versions are in the table.
 
 ## Homebrew upgrades
 
@@ -82,8 +104,9 @@ It logs its own undo. It also handles uv-created virtualenvs, which have no pip,
 **conda environments** (base and named, including mamba and micromamba): run the vetted fix script on the environment's python, like any other interpreter. It upgrades each package with whatever installed the copy Python actually imports, read from that package's `INSTALLER` file (a `conda-meta/` record alone can be stale after pip replaced the package):
 
 - **Installed by pip** (common in older environments): upgraded with the environment's own pip, and logged with an undo.
-- **Installed by conda:** left alone. The script prints `conda install -p <env prefix> 'certifi>=2026.10.19' 'python=<X.Y>'` (plus `'pip>=26.2.2'` when needed) and exits 3. The Python pin keeps conda from upgrading the interpreter to satisfy the request, and a conda-forge environment also gets `-c conda-forge`; offer that as a vetted recipe. It uses `conda install` with a minimum version because that fails loudly if the channel can't provide it, while `conda update` can report success and change nothing. Undo: `conda install -p <env prefix> certifi=<old>`, adding `pip=<old>` if pip was upgraded.
-- **conda-owned certifi on an older Python:** conda's builds of the fixed certifi need Python 3.10 or later on the defaults channel and 3.11 or later on conda-forge (the default for miniforge, mambaforge, and micromamba), so conda cannot install it below that. The script exits 4. Record the environment as open, and suggest retiring it or rebuilding it on Python 3.10 or later.
+- **conda's own `ca-certificates` package:** conda's OpenSSL, and Python's `ssl` module in a conda environment, read the environment's `ssl/cacert.pem` (`Library\ssl\cacert.pem` on Windows), which comes from this package rather than from certifi. Updating `base` does not update other environments. The script adds `'ca-certificates>=2026.10.20'` (defaults) or `'ca-certificates>=2026.10.19'` (conda-forge) to the conda command when it's older. Anaconda's defaults channel has no fixed build for Intel Macs (osx-64); the script reports that as open.
+- **Installed by conda:** left alone. The script prints `conda install -p <env prefix> 'ca-certificates>=...' 'certifi>=2026.10.19' 'python=<X.Y>'` (with whichever of `ca-certificates`, certifi, and `'pip>=26.2.2'` are needed) and exits 3. On micromamba-only machines it names `micromamba` (or `mamba`) instead of `conda`. The Python pin keeps conda from upgrading the interpreter to satisfy the request, and a conda-forge environment also gets `-c conda-forge`; offer that as a vetted recipe. It uses `conda install` with a minimum version because that fails loudly if the channel can't provide it, while `conda update` can report success and change nothing. Undo: `conda install -p <env prefix> certifi=<old> ca-certificates=<old>`, with `pip=<old>` if pip was upgraded.
+- **conda-owned certifi on an older Python:** conda's builds of the fixed certifi need Python 3.10 or later on the defaults channel and 3.11 or later on conda-forge (the default for miniforge, mambaforge, and micromamba), so conda cannot install it below that. The script still prints the conda command for what can be fixed (`ca-certificates` has no Python requirement), then a FAIL line for certifi, and exits 4. Offer the command, record certifi as open, and suggest retiring the environment or rebuilding it on Python 3.10 or later.
 
 **uv-managed Python:** `uv python upgrade 3.X`. Undo: `uv python install 3.X.Y` for the old patch version.
 
@@ -95,6 +118,10 @@ bash -c '. "$1/scripts/lib.sh"; rem_project_dirs | while read -r p; do find "$p"
 ```
 
 Only virtualenvs whose `certifi-*.dist-info` is older than 2026.10.19 need the fix. Show the full list, then ask once to run the fix script on exactly those, as one action. The interpreter is `<venv>/bin/python` on macOS and Linux and `<venv>\Scripts\python.exe` on Windows (pass that to `fix-python-env.ps1 -Python`). Skip virtualenvs the user does not recognize or that belong to a repository they don't work on. If the repository's `uv.lock` pins an old certifi, the next `uv sync` puts it back; see [Lock files](#lock-files).
+
+**Tool environments** (`pipx` and `uv tool`): each installed tool has its own virtualenv with its own pip and certifi, under `~/.local/pipx/venvs/`, `~/.local/share/pipx/venvs/`, or `~/.local/share/uv/tools/` (Windows: `%USERPROFILE%\pipx\venvs\`, `%APPDATA%\uv\tools\`). The check lists the vulnerable ones as `tool environment` FAILs; fix each with the fix script on that environment's python (`<venv>/bin/python`, or `<venv>\Scripts\python.exe`). `uv tool upgrade <tool>` or `pipx upgrade <tool>` upgrade only the tool, not necessarily certifi. Old `virtualenv` releases (before 21.14.12) also put the vulnerable pip into new environments; upgrade virtualenv itself if the user creates environments with it.
+
+**Why pip is tested live:** pip trusts its own bundled certificates in addition to `PIP_CERT`, `--cert`, and the system store, so a pip older than 26.2.2 can trust the compromised chains even on a machine whose system store is fixed. The check therefore tests each such pip against the test hosts. Apple's `/usr/bin/python3` pip passes once the macOS admin script has run.
 
 **End-of-life Python (3.9 and older):** the fixed pip cannot run there. Offer to upgrade `certifi` only, and recommend removing the interpreter if unused (`pyenv uninstall 3.9.X`). Removal is not reversible without reinstalling, so ask separately and never bundle it with other actions.
 
@@ -131,7 +158,7 @@ To remove an old version later, ask separately: `nvm uninstall <old>`. Never rem
 
 ## Git on Windows
 
-Git for Windows bundles its own CA file by default, which predates the fix. Switch it to the Windows store, which carries Microsoft's block:
+Git for Windows 2.56.0.windows.3 (October 22) is a security release for this incident; upgrading to it (or later) from <https://gitforwindows.org/> is the fix, and the user runs the installer. Without an upgrade, older Git for Windows uses its own bundled CA file, which predates the fix; switch it to the Windows store, which carries Microsoft's block:
 
 ```powershell
 git config --global --get http.sslBackend   # record the old value first
@@ -147,7 +174,7 @@ Undo: `git config --global http.sslBackend <old>`, or `git config --global --uns
 | Go (Homebrew) | [Homebrew upgrades](#homebrew-upgrades) with `go` | Old keg kept; relink it |
 | Go (Windows) | `winget upgrade --id GoLang.Go` | Reinstall the old version |
 | Go (official installer) | Download from <https://go.dev/dl/> (the user runs it) | Reinstall the old version |
-| uv (standalone) | `uv self update` | `uv self update <old>` |
+| uv (standalone) | `uv self update` (to 0.13.5 or later), then `uv python upgrade` for uv's own Pythons. Existing virtualenvs keep their pip; fix those with the fix script | `uv self update <old>` |
 | uv (Homebrew) | [Homebrew upgrades](#homebrew-upgrades) with `uv` | Old keg kept; relink it |
 | rustup | `rustup self update` | None needed |
 | Deno | `deno upgrade` | `deno upgrade --version <old>` |
@@ -156,11 +183,13 @@ Undo: `git config --global http.sslBackend <old>`, or `git config --global --uns
 
 ## Java
 
-Fixed releases exist: 27.0.1.0.2, 25.0.5.0.2, 21.0.13.0.2, 17.0.21.0.2, 11.0.33.0.2, and 8u511 ([OpenJDK advisory](https://openjdk.org/groups/vulnerability/advisories/2026-10-21), [Oracle](https://ops.java/emudhra)). A patched JDK blocks the compromised intermediates in `lib/security/blocked.certs` (`blacklisted.certs` on JDK 8); it keeps the roots in `cacerts`.
+Fixed releases: 27.0.1.0.2, 25.0.5.0.2, 21.0.13.0.2, 17.0.21.0.2, 11.0.33.0.2, and 8u511 from Oracle and OpenJDK ([OpenJDK advisory, CVE-2026-91403](https://openjdk.org/groups/vulnerability/advisories/2026-10-21), [Oracle](https://ops.java/emudhra)), and Azul's fixed builds. A patched JDK blocks the compromised intermediates in `lib/security/blocked.certs` (`blacklisted.certs` on JDK 8) and keeps the roots in `cacerts`.
+
+Not every vendor has shipped yet (as of October 23): **Temurin (Adoptium) and Amazon Corretto have no fixed builds**, and of Homebrew's JDKs only `openjdk@17`, `openjdk@21`, and `openjdk@25` are fixed (`openjdk` 27.0.1, `openjdk@11`, and `openjdk@8` are not). JDKs from Debian, Ubuntu, Fedora, RHEL, Oracle Linux, Arch, and Gentoo use the OS certificate store, so the OS's `ca-certificates` fix covers them.
 
 The check tests each JDK live against the test hosts when it can (JDK 11 or later, with network access). Otherwise it treats a JDK as safe when `blocked.certs` lists all 16 compromised intermediates, or when `cacerts` no longer has the two affected roots.
 
-For a FAIL, **upgrading the JDK to the fixed release on its line is the preferred fix**: through the JDK's own installer or manager (`sdk install java <version>`, Homebrew, the vendor's installer, or the OS package manager). The user runs installers themselves. Until then, the admin script for each OS removes the two affected roots from that JDK's `cacerts`, backing the file up first; it leaves patched JDKs alone. A JDK the user owns (sdkman, `~/.jdks`, Homebrew) could be fixed without the admin script, but prefer the admin script so everything lands in one reviewed place.
+For a FAIL, **upgrading to a fixed build from a vendor that has one is the preferred fix**: Homebrew `openjdk@17`, `@21`, or `@25`, the Oracle or Azul installers, or the OS package manager. The user runs installers themselves. Don't suggest a Temurin or Corretto upgrade as a fix until those vendors ship. Until then, the admin script for each OS removes the two affected roots from that JDK's `cacerts`, backing the file up first; it leaves patched JDKs alone. OpenJDK's own interim fix replaces `blocked.certs` with the file from ops.java; prefer the admin script, whose change is pinned and logged here.
 
 ## System trust store
 
@@ -177,6 +206,13 @@ Never edit the system trust store directly. Use the admin script for the OS, whi
 
 A macOS update rewrites `/etc/ssl/cert.pem` and brings the two roots back. Run the admin script after the macOS update, not before; if the update comes later, run it again afterwards.
 
+Side effects and limits to mention:
+
+- **macOS:** after the `cert.pem` step, Apple's `/usr/bin/perl` (HTTP::Tiny has no keychain fallback) can no longer reach sites that chain through the AAA cross-sign, such as example.com; this is expected. On Macs with full Xcode selected, macOS can refuse the `sitecustomize.py` step inside Xcode.app; the script then prints a `pip config` alternative and carries on. nix-darwin users also need the NixOS change.
+- **Fedora/RHEL family:** the site's p11-kit blocklist, which the script applies, leaves the two roots usable for unspecified purposes in `/etc/pki/ca-trust/extracted/openssl/ca-bundle.trust.crt` (an open site issue). Prefer the distribution's fixed package where it exists (RHEL 9 and 10, Oracle Linux 8 to 10).
+- **Debian/Ubuntu:** after the workaround, the script also rebuilds the Java store from `ca-certificates-java` when that package is installed, as the site advises.
+- **Alpine, openSUSE/SLES:** not supported by the script; record the store as open and point to the site's commands.
+
 ## Operating system, browsers, and apps
 
 These cannot be done from the agent. Give the user the steps:
@@ -184,9 +220,10 @@ These cannot be done from the agent. Give the user the steps:
 - **macOS:** System Settings > General > Software Update. Install the update and restart, then run the check again: the update restores `/etc/ssl/cert.pem`, so the admin script usually needs another run.
 - **Windows:** Settings > Windows Update > Check for updates. Install and restart.
 - **Linux:** install all pending updates with the distribution's updater (Software Updater, GNOME Software, `apt`, `dnf`, or `pacman -Syu`) and reboot if it asks.
-- **Browsers:** Chrome and Edge: menu > Help > About, then Relaunch. Firefox: Help > About Firefox. Safari updates with macOS.
-- **Apps:** update Slack, Zoom, VS Code, 1Password, Docker Desktop, and Claude Desktop from their own update menus.
-- **Phones:** iPhone: Settings > General > Software Update (iOS 26.7 or 27). Android: restart the phone so the Google Play Services update applies.
+- **Browsers:** Chrome and Edge: menu > Help > About, then Relaunch. Firefox: Help > About Firefox (158.0.1, or ESR 153.5.1 or 115.43.1). Safari uses Apple's system check.
+- **Apps:** update Slack (4.52.182 or later), Zoom, VS Code, 1Password, Docker Desktop (4.96.3 or later, and each patch after it), Cloudflare WARP (2026.8.2115.0), and Claude Desktop from their own update menus.
+- **iPhone and iPad:** there is no user-side fix. Apple's block arrives as background trust data, not in an iOS release: keep Settings > General > Software Update > Automatic Updates > "Security Responses & System Files" on, and still install iOS 26.7 or 27 for the separate certificate fix. Open the test URLs in Safari to confirm.
+- **Android:** restart the phone so the Google Play Services update applies.
 
 ## Things never to do
 

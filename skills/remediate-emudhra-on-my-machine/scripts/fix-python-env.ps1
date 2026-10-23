@@ -36,9 +36,23 @@ function Test-Old($v, $fixed) { try { return [version]$v -lt [version]$fixed } c
 # dist-info INSTALLER file says "conda" or "pip"; a conda-meta record alone can be stale, because pip
 # can replace a conda package and leave the record behind. Without an INSTALLER file, fall back to it.
 $condaPkgs = @(); $condaChannel = ''; $skipPip = $false; $skipCertifi = $false
+$openMsgs = @()  # what stays vulnerable; printed last, and it makes the exit code 4
 if ($conda) {
-    $meta = @(Get-ChildItem (Join-Path $prefix 'conda-meta') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+    $metaDir = Join-Path $prefix 'conda-meta'
+    $meta = @(Get-ChildItem $metaDir -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
     function Test-CondaOwned($name, $installer) { if ($installer) { return $installer -eq 'conda' } else { return [bool]($meta -match "^$name-\d") } }
+    function Test-FromForge($name) {
+        $rec = @(Get-ChildItem $metaDir -Filter "$name-*.json" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "^$name-\d" })
+        return [bool]($rec -and (Select-String -Path $rec[0].FullName -Pattern 'conda-forge' -SimpleMatch -Quiet))
+    }
+    # conda's OpenSSL, and Python's ssl module in a conda environment, read <prefix>\Library\ssl\cacert.pem, which
+    # comes from conda's ca-certificates package, not from certifi. Each environment has its own copy.
+    $caRec = @($meta | Where-Object { $_ -match '^ca-certificates-(\d[\d.]*)-' } | Select-Object -First 1)
+    if ($caRec -and $caRec[0] -match '^ca-certificates-(\d[\d.]*)-') {
+        $cav = $Matches[1]; $caFixed = '2026.10.20'
+        if (Test-FromForge 'ca-certificates') { $caFixed = '2026.10.19'; $condaChannel = '-c conda-forge ' }
+        if (Test-Old $cav $caFixed) { $condaPkgs += "`"ca-certificates>=$caFixed`"" }
+    }
     if ($oldPip -and (Test-CondaOwned 'pip' $pipInst)) {
         $skipPip = $true
         if ($py310 -and (Test-Old $oldPip '26.2.2')) { $condaPkgs += '"pip>=26.2.2"' }
@@ -49,33 +63,45 @@ if ($conda) {
             # conda's builds of the fixed certifi need Python 3.10+ on the defaults channel and 3.11+ on conda-forge (the PyPI one
             # needs only 3.7). Below that, conda cannot install it: it fails, or it offers to upgrade Python itself.
             $floor = '3.10'
-            $rec = @(Get-ChildItem (Join-Path $prefix 'conda-meta') -Filter 'certifi-*.json' -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^certifi-\d' })
-            if ($rec -and (Select-String -Path $rec[0].FullName -Pattern 'conda-forge' -SimpleMatch -Quiet)) { $floor = '3.11'; $condaChannel = '-c conda-forge ' }
-            if ([version]$pyver -lt [version]$floor) { Write-Host "FAIL: certifi $oldCertifi in $Python is vulnerable, and conda's build of the fixed certifi for this channel needs Python $floor or later (this is $pyver). Retire this environment, or rebuild it on Python $floor or later."; exit 4 }
-            $condaPkgs += '"certifi>=2026.10.19"'
+            if (Test-FromForge 'certifi') { $floor = '3.11'; $condaChannel = '-c conda-forge ' }
+            if ([version]$pyver -ge [version]$floor) { $condaPkgs += '"certifi>=2026.10.19"' }
+            else { $openMsgs += "certifi $oldCertifi in $Python is vulnerable, and conda's build of the fixed certifi for this channel needs Python $floor or later (this is $pyver). Retire this environment, or rebuild it on Python $floor or later." }
         }
     }
 }
-function Show-CondaAdvice {
-    if ($condaPkgs.Count -eq 0) { return }
-    Write-Host 'SKIP: conda installed these in this environment, so upgrade them with conda to keep the environment consistent:'
-    Write-Host "  conda install $condaChannel-p `"$prefix`" $($condaPkgs -join ' ') `"python=$pyver`""
-    exit 3
+# Complete-Run CODE: the last step on every path. Prints the conda command for conda-owned packages (exit 3) and then
+# whatever stays vulnerable (exit 4); otherwise exits CODE. The conda command uses minimum versions, which fail loudly
+# if conda cannot reach them, and pins the Python version so conda never upgrades Python.
+function Complete-Run($code) {
+    $rc = $code
+    if ($condaPkgs.Count -gt 0) {
+        Write-Host 'SKIP: conda installed these in this environment, so upgrade them with conda to keep the environment consistent:'
+        # micromamba-only machines have no conda command; the same arguments work for mamba and micromamba.
+        $cm = 'conda'
+        if (-not (Get-Command conda -ErrorAction SilentlyContinue)) {
+            if (Get-Command mamba -ErrorAction SilentlyContinue) { $cm = 'mamba' } elseif (Get-Command micromamba -ErrorAction SilentlyContinue) { $cm = 'micromamba' }
+        }
+        Write-Host "  $cm install $condaChannel-p `"$prefix`" $($condaPkgs -join ' ') `"python=$pyver`""
+        $rc = 3
+    }
+    if ($openMsgs.Count -gt 0) { $openMsgs | ForEach-Object { Write-Host "FAIL: $_" }; $rc = 4 }
+    exit $rc
 }
 
 if (-not $oldPip) {
     # conda environments can lack pip too; a conda-owned certifi there is conda's to upgrade.
-    if ($skipCertifi) { Show-CondaAdvice; Write-Host "certifi $oldCertifi is already fixed."; exit 0 }
-    if (-not $oldCertifi) { Write-Host "Nothing to upgrade in $Python (no pip, no certifi)."; exit 0 }
-    if ([version]$oldCertifi -ge [version]'2026.10.19') { Write-Host "certifi $oldCertifi is already fixed."; exit 0 }
+    if ($skipCertifi) { Complete-Run 0 }
+    if (-not $oldCertifi) { Write-Host "Nothing for pip or uv to upgrade in $Python (no pip, no certifi)."; Complete-Run 0 }
+    if (-not (Test-Old $oldCertifi '2026.10.19')) { Write-Host "certifi $oldCertifi is already fixed."; Complete-Run 0 }
     $uv = Get-Command uv.exe -ErrorAction SilentlyContinue
-    if (-not $uv) { Write-Host "FAIL: certifi $oldCertifi in $Python is vulnerable, and this environment has neither pip nor uv to upgrade it."; exit 4 }
+    if (-not $uv) { $openMsgs += "certifi $oldCertifi in $Python is vulnerable, and this environment has neither pip nor uv to upgrade it."; Complete-Run 4 }
     Write-Host "Upgrading certifi in $Python with uv (this environment has no pip)"
     Invoke-RemNative $uv.Source @('pip', 'install', '--python', $Python, 'certifi>=2026.10.19') | Write-Host
-    if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: uv could not install the fixed certifi in $Python; nothing was changed."; exit 4 }
+    if ($LASTEXITCODE -ne 0) { $openMsgs += "uv could not install the fixed certifi in $Python; nothing was changed."; Complete-Run 4 }
     $newCertifi = (Invoke-RemNative $Python @('-c', 'import certifi; print(certifi.__version__)') | Select-Object -Last 1).Trim()
     Write-RemLog 'vetted-script:fix-python-env.ps1' "upgraded certifi in $Python (uv)" "certifi $oldCertifi -> $newCertifi" "uv pip install --python $qpy certifi==$oldCertifi"
-    Write-Host "Done. certifi $newCertifi. Logged to $RemLog"; exit 0
+    Write-Host "Done. certifi $newCertifi. Logged to $RemLog"
+    Complete-Run 0
 }
 
 $pkgs = @()
@@ -83,20 +109,17 @@ if (-not $skipPip) {
     if ($py310) { $pkgs += 'pip>=26.2.2' } else { Write-Host "NOTE: Python $pyver cannot run the fixed pip (needs 3.10+). Upgrading certifi only." }
 }
 if ($oldCertifi -and -not $skipCertifi) { $pkgs += 'certifi>=2026.10.19' }
-# Exits 4 when this Python's pip is vulnerable and cannot be fixed (the fixed pip needs 3.10+).
-function Test-PipStaysOld {
-    if (-not $py310 -and -not $skipPip -and $oldPip -and (Test-Old $oldPip '26.2.2')) {
-        Write-Host "FAIL: pip $oldPip in $Python stays vulnerable: the fixed pip needs Python 3.10 or later (this is $pyver). Retire this environment, or rebuild it on Python 3.10 or later."
-        exit 4
-    }
+# A pip that is vulnerable and cannot be fixed (the fixed pip needs Python 3.10+) stays open.
+if (-not $py310 -and $oldPip -and (Test-Old $oldPip '26.2.2')) {
+    $openMsgs += "pip $oldPip in $Python stays vulnerable: the fixed pip needs Python 3.10 or later (this is $pyver). Retire this environment, or rebuild it on Python 3.10 or later."
 }
-if ($pkgs.Count -eq 0) { Show-CondaAdvice; Test-PipStaysOld; Write-Host "Nothing to upgrade in $Python."; exit 0 }
+if ($pkgs.Count -eq 0) { Write-Host "Nothing for pip to upgrade in $Python."; Complete-Run 0 }
 
 Write-Host "Upgrading in $Python with its own pip: $($pkgs -join ' ')"
 Invoke-RemNative $Python (@('-m', 'pip', 'install', '--disable-pip-version-check', '--upgrade') + $pkgs) | Write-Host
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "FAIL: pip could not install the fixed versions in $Python. Python $pyver may be too old for them: retire this environment, or rebuild it on Python 3.10 or later."
-    exit 4
+    $openMsgs += "pip could not install the fixed versions in $Python. Python $pyver may be too old for them: retire this environment, or rebuild it on Python 3.10 or later."
+    Complete-Run 4
 }
 
 $undo = "& $qpy -m pip install"; $parts = @()
@@ -111,5 +134,4 @@ if ($pkgs -contains 'certifi>=2026.10.19') {
 $detail = $parts -join ', '
 Write-RemLog 'vetted-script:fix-python-env.ps1' "upgraded pip/certifi in $Python" $detail $undo
 Write-Host "Done. $detail. Logged to $RemLog"
-Show-CondaAdvice
-Test-PipStaysOld
+Complete-Run 0

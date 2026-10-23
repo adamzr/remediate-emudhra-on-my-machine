@@ -15,7 +15,7 @@ compatibility: >-
   Needs an agent with a shell tool on the computer being fixed. macOS and Linux need bash and curl; Windows
   needs Windows PowerShell 5.1 or later. Network access is required for the live checks.
 metadata:
-  version: "1.1.1"
+  version: "1.2.0"
   tags: "security, incident-response, tls, certificates, trust-store, endpoint"
   repository: "https://github.com/adamzr/remediate-emudhra-on-my-machine"
 ---
@@ -85,7 +85,7 @@ In Git Bash, always prefix `wsl.exe` with `MSYS_NO_PATHCONV=1`; otherwise it rew
 
 Work through the FAIL lines in this order, one action at a time, each using the request template. `references/fix-recipes.md` has the command and undo for each. Read the matching section before proposing anything.
 
-1. Python interpreters, with `scripts/fix-python-env.sh` or `.ps1` (vetted script), then project virtualenvs as one listed batch. If uv FAILs, upgrade it (item 4) first, because the fix script uses `uv pip` for uv-created virtualenvs.
+1. Python interpreters, with `scripts/fix-python-env.sh` or `.ps1` (vetted script), then project virtualenvs and `tool environment` lines (pipx and `uv tool`) as one listed batch. In conda environments the script also covers conda's own `ca-certificates` package. If uv FAILs, upgrade it (item 4) first, because the fix script uses `uv pip` for uv-created virtualenvs.
 2. Node.js: install the fixed release on the same line and make it the default.
 3. Git on Windows: switch to the Windows certificate store.
 4. Go, uv, rustup, Deno, Bun, conda, mise, pixi, Claude Code, and Homebrew's `ca-certificates` and `certifi`. A Java FAIL is fixed best by upgrading that JDK (see Java in `references/fix-recipes.md`); the admin step covers JDKs the user can't upgrade yet.
@@ -122,7 +122,7 @@ When the user says done, run the check again (same approval rule as step 2) and 
 
 ### 6. Things only the user can do
 
-List what remains outside the agent, from the last section of `references/fix-recipes.md`: OS updates (macOS 15.8+, 26.7+, or 27; Windows Update; the Linux package manager), browser updates and the four test URLs, app updates, and phones (iOS 26.7+ or 27; restart Android). Ask them to open the four test URLs from the check's `INFO|browsers` line in each browser now (two of them use chains never logged to Certificate Transparency, which some browser blocks rely on) and tell you whether all four show a certificate error.
+List what remains outside the agent, from the last section of `references/fix-recipes.md`: OS updates (macOS 15.8+, 26.7+, or 27; Windows Update; the Linux package manager), browser updates and the four test URLs, app updates (Docker Desktop 4.96.3 and each patch after it), and phones. On iPhone there is no user-side fix: Apple's block arrives as background trust data, so "Security Responses & System Files" must stay on. Restart Android phones. Ask them to open the four test URLs from the check's `INFO|browsers` line in each browser now (two of them use chains never logged to Certificate Transparency, which some browser blocks rely on) and tell you whether all four show a certificate error.
 
 ### 7. Summarize, and report problems with the skill
 
@@ -147,10 +147,16 @@ End by telling the user where the action log and backups are, and that `actions.
 - **`check.sh` reports every interpreter it finds**, including tools' private ones. Fix the ones the user actually uses first, and treat EOL Pythons and unused Node versions as cleanup to suggest, not mandatory fixes.
 - **conda environments mix two installers.** The check finds named environments too (`envs/*` and `~/.conda/environments.txt`). In each one, a package may have come from conda or from pip; `fix-python-env.sh` upgrades each with the tool that installed it, so never run `conda update` on a package pip installed, or the reverse.
 - **uv virtualenvs have no pip.** `fix-python-env.sh` upgrades their certifi with `uv pip`; don't improvise a pip bootstrap.
-- **System Pythons** (`/usr/bin/python3` on macOS and Linux) use the system trust store; the check reports their pip as PASS once the admin step is done. Never modify them. Apple's python3 ships no certifi, so a certifi the check finds there was added with pip and is a FAIL; the OS-owned Python recipes say which ones the user can fix.
+- **pip is tested live.** pip trusts its own bundled certificates alongside `PIP_CERT` and the system store, so an old pip can still trust the compromised chains on a machine whose store is fixed. Trust the live result, not the setting.
+- **conda environments read conda's `ca-certificates` package**, not certifi, for Python's `ssl` module and OpenSSL. Each environment needs its own update; updating `base` does not cover the others.
+- **Apple's block on the emSign chains depends on eMudhra's OCSP server**, and it failed open while that server was down. The macOS keychain step closes that gap, so run it even though Apple has blocked the certificates. On iPhone there is nothing to install.
+- **Not every JDK vendor has shipped** (Temurin and Corretto have not; Homebrew `openjdk` 27.0.1, `@11`, and `@8` are not fixed). Recommend only the upgrades listed under Java in the fix recipes.
+- **System Pythons** (`/usr/bin/python3` on macOS and Linux) use the system trust store; on macOS their pip passes the live test once the admin step is done. Never modify them. Apple's python3 ships no certifi, so a certifi the check finds there was added with pip and is a FAIL; the OS-owned Python recipes say which ones the user can fix.
 - **`brew upgrade` without the recipe's variables upgrades every dependent.** For `ca-certificates` that can pull in Node, Deno, a new Python, and ffmpeg. Always dry-run and use both variables.
 - **Homebrew's Pythons import the separate `certifi` formula when another formula installed it.** Upgrading `python@3.X` fixes pip and leaves that certifi old.
 - **A macOS update restores the two roots in `/etc/ssl/cert.pem`.** Re-run the check after any macOS update, and the admin script if it FAILs.
+- **On Macs with full Xcode selected, macOS App Management can block the admin script's `sitecustomize.py` step** inside Xcode.app, even with sudo. The script reports it, prints a `pip config` alternative, and still runs the keychain and JDK steps.
+- **After the macOS `cert.pem` step, `/usr/bin/perl` can't reach sites that chain through the AAA cross-sign** (example.com, for one). That is expected; mention it if the user relies on Apple's perl.
 - **On Arch, the package update is a full system upgrade.** Arch does not support partial upgrades, so the admin script runs `pacman -Syu`. Say so before the user runs it, and offer the dry run.
 - **Windows virtualenvs use `Lib\site-packages` and `Scripts\python.exe`**, not `lib/python3.X/site-packages` and `bin/python`. The virtualenv recipe matches both.
 - **An Xcode or Command Line Tools update** can remove the `PIP_CERT` line the macOS admin script adds. Re-running the admin script restores it.

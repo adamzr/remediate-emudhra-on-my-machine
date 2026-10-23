@@ -2,6 +2,19 @@
 
 All notable changes to this skill are recorded here. Versions follow [semver](https://semver.org) and match `metadata.version` in `SKILL.md`.
 
+## 1.2.0 (October 23, 2026)
+
+Follows the incident site, vendor advisories, and distribution errata as of October 23.
+
+- **pip is tested live.** pip trusts its own bundled certificates alongside `PIP_CERT` and the system store; on a Linux machine with a fixed store, pip 25.2 still trusted the compromised chain. The check had reported such pips as PASS ("uses the system trust store"); it now tests each pip older than 26.2.2 against the test hosts.
+- **conda's `ca-certificates` package**, which conda's OpenSSL and Python's `ssl` module read, is checked per environment and included in the conda command (2026.10.20 on defaults, 2026.10.19 on conda-forge; none for Intel Macs on defaults). Environments too old for the fixed certifi still get the command for what can be fixed, then exit 4.
+- **macOS admin script:** a refused `sitecustomize.py` write inside Xcode.app (macOS App Management) no longer stops the keychain and JDK steps; the script prints a `pip config` alternative.
+- **Debian/Ubuntu admin script:** rebuilds the `ca-certificates-java` store after the workaround, as the site now advises.
+- **New checks:** pipx and `uv tool` environments, the MacPorts CA bundle, cloudflared 2026.10.2, Azure CLI (no fix yet), Firefox 158.0.1 / ESR 153.5.1 / 115.43.1, and on Windows the date of the last untrusted-certificate-list sync. uv 0.13.4 is now a WARN recommending 0.13.5.
+- **Live tests** count a connection as trusted only when the test site's own reply comes back, so a TLS-intercepting proxy reads as inconclusive instead of FAIL.
+- **Corrected facts:** Docker Desktop 4.96.3 (fix shipping in batches), Git for Windows 2.56.0.windows.3, which JDK vendors have shipped, Apple's block (background trust data, OCSP-dependent; nothing to install on iPhone), Android's date (October 19), Chrome's October 27 root removal, and a distribution table (Debian, Ubuntu, RHEL 9/10, Oracle Linux, Alpine). The rpm INFO line no longer calls Oracle Linux's fixed package unfixed, and NixOS's `cacert` is noted as master-only.
+- **Fixes:** a conda-owned pip on Python 3.9 or older now exits 4 instead of 0; micromamba-only machines get a `micromamba` command; the fix script no longer runs Apple's `/usr/bin/python3` when the Command Line Tools are missing.
+
 ## 1.1.1 (October 22, 2026)
 
 No behavior changes.

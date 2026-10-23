@@ -14,6 +14,11 @@ PY="${1:?usage: fix-python-env.sh /path/to/python}"
   exit 2
 }
 
+# Apple's /usr/bin/python3 opens an "install developer tools" dialog when the tools are missing.
+rem_mac_tool_ok "$PY" || {
+  echo "SKIP: $PY needs Apple's Command Line Tools, which are not installed. Nothing to do here."
+  exit 3
+}
 info="$(
   "$PY" - << 'PY'
 import sys, sysconfig, os, glob
@@ -67,15 +72,36 @@ if [ "$major" -gt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -ge 10 ]; }; then py
 # can replace a conda package and leave the record behind. Without an INSTALLER file, fall back to it.
 conda_pkgs=""
 conda_channel=""
+open_msgs="" # FAIL lines for what stays vulnerable; printed last, and they make the exit code 4
 skip_pip=0
 skip_certifi=0
+add_open() { open_msgs="${open_msgs:+$open_msgs
+}FAIL: $1"; }
 if [ -n "$conda" ]; then
   conda_owned() { # NAME INSTALLER
     if [ -n "$2" ]; then [ "$2" = conda ]; else ls "$prefix/conda-meta/$1"-[0-9]*.json > /dev/null 2>&1; fi
   }
+  from_forge() { grep -qs 'conda-forge' "$prefix"/conda-meta/"$1"-[0-9]*.json; }
+  # conda's OpenSSL, and Python's ssl module in a conda environment, read $prefix/ssl/cacert.pem, which comes
+  # from conda's ca-certificates package, not from certifi. Each environment has its own copy.
+  cav="$({ ls "$prefix"/conda-meta/ca-certificates-[0-9]*.json 2> /dev/null || true; } | head -1 | sed -E 's#.*/ca-certificates-([0-9][0-9.]*)-.*#\1#')"
+  if [ -n "$cav" ]; then
+    ca_fixed=2026.10.20
+    if from_forge ca-certificates; then
+      ca_fixed=2026.10.19
+      conda_channel="-c conda-forge "
+    fi
+    if ! rem_ver_ge "$cav" "$ca_fixed"; then
+      if [ "$ca_fixed" = 2026.10.20 ] && [ "$(uname -s)-$(uname -m)" = Darwin-x86_64 ]; then
+        add_open "conda's ca-certificates $cav in $prefix is vulnerable, and Anaconda's defaults channel has no fixed build for Intel Macs (osx-64). Move this environment to conda-forge, or retire it."
+      else
+        conda_pkgs="'ca-certificates>=$ca_fixed'"
+      fi
+    fi
+  fi
   if [ -n "$old_pip" ] && conda_owned pip "$pip_inst"; then
     skip_pip=1
-    if [ "$py310" = 1 ] && ! rem_ver_ge "$old_pip" 26.2.2; then conda_pkgs="'pip>=26.2.2'"; fi
+    if [ "$py310" = 1 ] && ! rem_ver_ge "$old_pip" 26.2.2; then conda_pkgs="${conda_pkgs:+$conda_pkgs }'pip>=26.2.2'"; fi
   fi
   if [ -n "$old_certifi" ] && conda_owned certifi "$certifi_inst"; then
     skip_certifi=1
@@ -84,26 +110,38 @@ if [ -n "$conda" ]; then
       # conda-forge (the PyPI one needs only 3.7). Below that, conda cannot install it: it fails, or it
       # offers to upgrade Python itself, which is far beyond this fix.
       floor=3.10
-      if grep -qs 'conda-forge' "$prefix"/conda-meta/certifi-[0-9]*.json; then
+      if from_forge certifi; then
         floor=3.11
         conda_channel="-c conda-forge "
       fi
-      if ! rem_ver_ge "$pyver" "$floor"; then
-        echo "FAIL: certifi $old_certifi in $PY is vulnerable, and conda's build of the fixed certifi for this channel needs Python $floor or later (this is $pyver). Retire this environment, or rebuild it on Python $floor or later."
-        exit 4
+      if rem_ver_ge "$pyver" "$floor"; then
+        conda_pkgs="${conda_pkgs:+$conda_pkgs }'certifi>=2026.10.19'"
+      else
+        add_open "certifi $old_certifi in $PY is vulnerable, and conda's build of the fixed certifi for this channel needs Python $floor or later (this is $pyver). Retire this environment, or rebuild it on Python $floor or later."
       fi
-      conda_pkgs="${conda_pkgs:+$conda_pkgs }'certifi>=2026.10.19'"
     fi
   fi
 fi
-# conda_advice -> prints the conda command for the conda-owned packages, if any, and exits 3. It uses
-# conda install with a minimum version, which fails loudly if conda cannot reach it (conda update can
-# report success and change nothing), and pins the Python version so conda never upgrades Python.
-conda_advice() {
-  [ -n "$conda_pkgs" ] || return 0
-  echo "SKIP: conda installed these in this environment, so upgrade them with conda to keep the environment consistent:"
-  echo "  conda install ${conda_channel}-p $(rem_q "$prefix") $conda_pkgs 'python=$pyver'"
-  exit 3
+# finish CODE -> the last step on every path. Prints the conda command for conda-owned packages (exit 3)
+# and then whatever stays vulnerable (exit 4); otherwise exits CODE. The conda command uses conda install
+# with minimum versions, which fails loudly if conda cannot reach them (conda update can report success and
+# change nothing), and pins the Python version so conda never upgrades Python.
+finish() {
+  local rc="$1" cm=conda
+  if [ -n "$conda_pkgs" ]; then
+    echo "SKIP: conda installed these in this environment, so upgrade them with conda to keep the environment consistent:"
+    # micromamba-only machines have no conda command; the same arguments work for mamba and micromamba.
+    if ! command -v conda > /dev/null; then
+      if command -v mamba > /dev/null; then cm=mamba; elif command -v micromamba > /dev/null; then cm=micromamba; fi
+    fi
+    echo "  $cm install ${conda_channel}-p $(rem_q "$prefix") $conda_pkgs 'python=$pyver'"
+    rc=3
+  fi
+  if [ -n "$open_msgs" ]; then
+    printf '%s\n' "$open_msgs"
+    rc=4
+  fi
+  exit "$rc"
 }
 if [ "$managed" = managed ]; then
   echo "SKIP: $PY is marked EXTERNALLY-MANAGED (Homebrew or uv owns it)."
@@ -134,34 +172,30 @@ fi
 
 if [ -z "$old_pip" ]; then
   # conda environments can lack pip too; a conda-owned certifi there is conda's to upgrade.
-  if [ "$skip_certifi" = 1 ]; then
-    conda_advice
-    echo "certifi $old_certifi in $PY is already fixed."
-    exit 0
-  fi
+  if [ "$skip_certifi" = 1 ]; then finish 0; fi
   # Virtualenvs created by uv have no pip. Upgrade certifi with uv instead.
   if [ -z "$old_certifi" ]; then
-    echo "Nothing to upgrade in $PY (no pip, no certifi)."
-    exit 0
+    echo "Nothing for pip or uv to upgrade in $PY (no pip, no certifi)."
+    finish 0
   fi
   if rem_ver_ge "$old_certifi" 2026.10.19; then
     echo "certifi $old_certifi in $PY is already fixed."
-    exit 0
+    finish 0
   fi
   if ! command -v uv > /dev/null; then
-    echo "FAIL: certifi $old_certifi in $PY is vulnerable, and this environment has neither pip nor uv to upgrade it."
-    exit 4
+    add_open "certifi $old_certifi in $PY is vulnerable, and this environment has neither pip nor uv to upgrade it."
+    finish 4
   fi
   echo "Upgrading certifi in $PY with uv (this environment has no pip)"
   if ! uv pip install --python "$PY" 'certifi>=2026.10.19'; then
-    echo "FAIL: uv could not install the fixed certifi in $PY; nothing was changed."
-    exit 4
+    add_open "uv could not install the fixed certifi in $PY; nothing was changed."
+    finish 4
   fi
   new_certifi="$("$PY" -c 'import certifi; print(certifi.__version__)')"
   rem_log "vetted-script:fix-python-env.sh" "upgraded certifi in $PY (uv)" "certifi $old_certifi -> $new_certifi" \
     "uv pip install --python $QPY certifi==$old_certifi"
   echo "Done. certifi $new_certifi. Logged to $REM_LOG"
-  exit 0
+  finish 0
 fi
 
 pkgs=""
@@ -171,25 +205,20 @@ if [ "$skip_pip" = 0 ]; then
   else echo "NOTE: Python $pyver cannot run the fixed pip (needs 3.10+). Upgrading certifi only."; fi
 fi
 if [ -n "$old_certifi" ] && [ "$skip_certifi" = 0 ]; then pkgs="${pkgs:+$pkgs }certifi>=2026.10.19"; fi
-# pip_stays_old -> exits 4 when this Python's pip is vulnerable and cannot be fixed (it needs 3.10+).
-pip_stays_old() {
-  if [ "$py310" = 0 ] && [ "$skip_pip" = 0 ] && [ -n "$old_pip" ] && ! rem_ver_ge "$old_pip" 26.2.2; then
-    echo "FAIL: pip $old_pip in $PY stays vulnerable: the fixed pip needs Python 3.10 or later (this is $pyver). Retire this environment, or rebuild it on Python 3.10 or later."
-    exit 4
-  fi
-}
+# A pip that is vulnerable and cannot be fixed (the fixed pip needs Python 3.10+) stays open.
+if [ "$py310" = 0 ] && [ -n "$old_pip" ] && ! rem_ver_ge "$old_pip" 26.2.2; then
+  add_open "pip $old_pip in $PY stays vulnerable: the fixed pip needs Python 3.10 or later (this is $pyver). Retire this environment, or rebuild it on Python 3.10 or later."
+fi
 if [ -z "$pkgs" ]; then
-  conda_advice
-  pip_stays_old
-  echo "Nothing to upgrade in $PY."
-  exit 0
+  echo "Nothing for pip to upgrade in $PY."
+  finish 0
 fi
 
 echo "Upgrading in $PY with its own pip: $pkgs"
 # shellcheck disable=SC2086
 if ! "$PY" -m pip install --disable-pip-version-check --upgrade $pkgs; then
-  echo "FAIL: pip could not install the fixed versions in $PY. Python $pyver may be too old for them: retire this environment, or rebuild it on Python 3.10 or later."
-  exit 4
+  add_open "pip could not install the fixed versions in $PY. Python $pyver may be too old for them: retire this environment, or rebuild it on Python 3.10 or later."
+  finish 4
 fi
 
 undo="$QPY -m pip install"
@@ -208,5 +237,4 @@ case "$pkgs" in *certifi*)
 esac
 rem_log "vetted-script:fix-python-env.sh" "upgraded pip/certifi in $PY" "$detail" "$undo"
 echo "Done. $detail. Logged to $REM_LOG"
-conda_advice
-pip_stays_old
+finish 0

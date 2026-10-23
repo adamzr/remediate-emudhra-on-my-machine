@@ -14,10 +14,10 @@ Browsers and operating systems received automatic blocks. Much of the software o
 |---|---|
 | System trust store | macOS `/etc/ssl/cert.pem` and keychain, the Windows certificate stores, and the Linux CA bundle, plus live tests against the incident's test hosts |
 | curl and git | Every copy found, tested live |
-| Python | Every interpreter (pyenv, python.org, Homebrew, uv, system, and every conda, mamba, or micromamba environment), its pip and certifi, and project virtualenvs |
+| Python | Every interpreter (pyenv, python.org, Homebrew, uv, system, and every conda, mamba, or micromamba environment), its pip (tested live) and certifi, conda's own `ca-certificates`, project virtualenvs, and pipx and `uv tool` environments |
 | Node.js | Every installed version (nvm, fnm, Volta, Homebrew), plus a live test of the default |
 | Java | Every JDK found, tested live where possible (patched JDKs block the intermediates in `blocked.certs`) |
-| Other tools | Go, uv, rustup, Deno, Bun, conda, mise, pixi, Claude Code itself, and Homebrew's `ca-certificates` and `certifi` |
+| Other tools | Go, uv, rustup, Deno, Bun, conda, mise, pixi, cloudflared, Azure CLI, Firefox, Claude Code itself, and the Homebrew and MacPorts CA bundles |
 | WSL | Each Linux distribution under Windows, checked as its own machine |
 | Lock files | Repositories whose `uv.lock` pins a vulnerable certifi |
 
@@ -77,7 +77,9 @@ Some items need you, or a vendor:
 
 - **Operating system and browser updates.** The skill tells you what to install.
 - **Phones.** Update iOS to 26.7 or later. Restart Android.
-- **JDKs you can't upgrade yet.** Patched JDKs exist (27.0.1.0.2, 25.0.5.0.2, 21.0.13.0.2, 17.0.21.0.2, 11.0.33.0.2, 8u511), and upgrading is the fix. Until then, the admin script removes the affected roots from an unpatched JDK's `cacerts`.
+- **JDKs you can't upgrade yet.** Oracle, OpenJDK, Azul, and some Homebrew JDKs have fixed builds, but Temurin and Corretto had none as of October 23. Until a fix reaches your JDK, the admin script removes the affected roots from its `cacerts`.
+- **iPhone and iPad.** Apple's block arrives as background trust data; there is nothing to install, so keep automatic security responses on.
+- **Old Python environments.** Python 3.9 and older can't run the fixed pip, and conda's fixed certifi needs Python 3.10 (3.11 on conda-forge). The skill reports those environments as open.
 - **Python's urllib on Windows** ignores the store where Microsoft's block lives. No fix exists yet. pip and requests are covered.
 
 ## Update

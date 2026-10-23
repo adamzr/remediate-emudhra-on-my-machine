@@ -38,7 +38,14 @@ if ($pol -and $pol.DisableRootAutoUpdate -eq 1) {
 $have = @(Get-ChildItem Cert:\LocalMachine\Disallowed -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Thumbprint)
 $need = Get-RemIntermediate | ForEach-Object { $_.Thumbprint }
 $missing = @($need | Where-Object { $have -notcontains $_ }).Count
-Emit INFO os untrusted-store "$((16 - $missing)) of 16 compromised intermediates are in LocalMachine\Disallowed (Microsoft's own update blocks them separately)"
+Emit INFO os untrusted-store "$((16 - $missing)) of 16 compromised intermediates are in LocalMachine\Disallowed (Microsoft's own update blocks them separately, invisibly in certlm.msc)"
+# Microsoft's block arrives with the automatic untrusted-certificate list (no KB); this is when Windows last synced it.
+$au = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\SystemCertificates\AuthRoot\AutoUpdate' -ErrorAction SilentlyContinue
+if ($au -and $au.DisallowedCertLastSyncTime -is [byte[]] -and $au.DisallowedCertLastSyncTime.Length -ge 8) {
+    $sync = [DateTime]::FromFileTimeUtc([BitConverter]::ToInt64($au.DisallowedCertLastSyncTime, 0))
+    if ($sync -ge [DateTime]::new(2026, 10, 20, 0, 0, 0, [DateTimeKind]::Utc)) { Emit PASS os untrusted-list "Windows synced its untrusted-certificate list on $($sync.ToString('yyyy-MM-dd')) UTC, after Microsoft's block shipped" }
+    else { Emit WARN os untrusted-list "Windows last synced its untrusted-certificate list on $($sync.ToString('yyyy-MM-dd')) UTC, before Microsoft's block shipped on 2026-10-20; the admin script adds the block locally" }
+}
 if ($net) {
     foreach ($u in @($RemBadEmsign, $RemBadAaa)) {
         switch (Test-Schannel $u) {
@@ -86,7 +93,7 @@ if ($net) {
             $env:GIT_TERMINAL_PROMPT = '0'
             $out = Invoke-RemCapture $git.Source @('ls-remote', $u)
             if ($out -match 'SSL certificate problem|certificate verify failed|SEC_E_|CERT_E_|schannel: ') { Emit PASS git $git.Source "rejects $u" }
-            elseif ($out -match 'not valid: is this a git repository|not found|returned error: 4') { Emit FAIL git $git.Source "TRUSTS $u (sslBackend: $(if ($backend) { $backend } else { 'openssl default' }))" }
+            elseif ($out -match 'not valid: is this a git repository|not found|returned error: 4') { Emit FAIL git $git.Source "TRUSTS $u (sslBackend: $(if ($backend) { $backend } else { 'openssl default' })). Upgrade to Git for Windows 2.56.0.windows.3 or later, or switch it to the Windows store (fix-recipes)" }
             else { Emit WARN git $git.Source "could not test $u" }
         } }
     }
@@ -95,7 +102,7 @@ if ($net) {
 # ---- Python interpreters ----
 $pyTest = Join-Path $env:TEMP 'remediate-emudhra-pytest.py'
 @'
-import sys
+import sys, os, re
 label, net, bad1, bad2, control = sys.argv[1:6]
 FIX_PIP, FIX_CERTIFI = (26, 2, 2), (2026, 10, 19)
 def vt(s):
@@ -108,10 +115,55 @@ if fixed_py and tuple(sys.version_info[:3]) < fixed_py:
     emit("WARN", "Python %s: the patched release on this line is %s; upgrade when you can" % (ver, ".".join(map(str, fixed_py))))
 if sys.version_info < (3, 10):
     emit("WARN", "Python %s is end of life; the fixed pip needs 3.10+%s. Remove it if unused" % (ver, " and Python 2 cannot run the fixed certifi (the last release for it is 2021.10.8)" if sys.version_info[0] < 3 else ""))
+def pip_probe(u):
+    # A live test of this interpreter's pip: an SSL verification error means it rejects the host. pip keeps
+    # its own certificate list alongside the system store, so only a live test is conclusive.
+    import subprocess, tempfile, shutil
+    d = tempfile.mkdtemp()
+    try:
+        p = subprocess.Popen([sys.executable, "-B", "-m", "pip", "download", "--no-deps", "--no-cache-dir",
+                              "--disable-pip-version-check", "--retries", "0", "--timeout", "20", "-d", d,
+                              "--index-url", u.rstrip("/") + "/simple/", "remediate-emudhra-probe"],
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        out = p.communicate()[0].decode("utf-8", "replace")
+    except Exception:
+        return "error"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    if re.search(r"CERTIFICATE_VERIFY_FAILED|certificate verify failed|SSLCertVerificationError|SSLError", out):
+        return "rejected"
+    if re.search(r"No matching distribution|Could not find a version", out):
+        return "trusted"
+    return "error"
 try:
-    import pip; emit("PASS" if vt(pip.__version__) >= FIX_PIP else "FAIL", "pip %s (fixed: 26.2.2)" % pip.__version__)
+    import pip
+    pv = pip.__version__
+    if vt(pv) >= FIX_PIP:
+        emit("PASS", "pip %s" % pv)
+    else:
+        live = [pip_probe(u) for u in (control, bad1, bad2)] if net == "1" else []
+        if live == ["trusted", "rejected", "rejected"]:
+            emit("PASS", "pip %s rejects both test hosts (live test)" % pv)
+        elif live[:1] == ["trusted"] and "trusted" in live[1:]:
+            emit("FAIL", "pip %s TRUSTS a compromised chain (live test; fixed: 26.2.2)" % pv)
+        else:
+            emit("FAIL", "pip %s (fixed: 26.2.2; no conclusive live test)" % pv)
 except Exception:
     emit("INFO", "no pip")
+meta = os.path.join(sys.prefix, "conda-meta")
+if os.path.isdir(meta):
+    # conda's OpenSSL and the ssl module in a conda environment read $PREFIX/ssl/cacert.pem, from this package.
+    import glob, json
+    recs = [f for f in glob.glob(os.path.join(meta, "ca-certificates-*.json")) if re.match(r"ca-certificates-\d", os.path.basename(f))]
+    if recs:
+        try:
+            rec = json.load(open(recs[0]))
+            cav, chan = rec.get("version", ""), "%s %s" % (rec.get("channel", ""), rec.get("url", ""))
+        except Exception:
+            cav, chan = "", ""
+        need = (2026, 10, 19) if "conda-forge" in chan else (2026, 10, 20)
+        if cav:
+            emit("PASS" if vt(cav) >= need else "FAIL", "conda ca-certificates %s (fixed: %s)" % (cav, ".".join(map(str, need))))
 try:
     import certifi; emit("PASS" if vt(certifi.__version__) >= FIX_CERTIFI else "FAIL", "certifi %s (fixed: 2026.10.19)" % certifi.__version__)
 except Exception:
@@ -123,7 +175,9 @@ if net == "1":
         from urllib2 import urlopen
     def probe(u):
         try:
-            urlopen(u, timeout=20); return "trusted"
+            body = urlopen(u, timeout=20).read(4096).decode("utf-8", "replace")
+            # The test hosts answer with this text; anything else came from a TLS-intercepting proxy.
+            return "trusted" if (u == control or "successfully connected" in body) else "inconclusive"
         except Exception as e:
             return "rejected" if "CERTIFICATE_VERIFY_FAILED" in repr(e) else "error"
     if probe(control) != "trusted":
@@ -132,9 +186,11 @@ if net == "1":
     for u in (bad1, bad2):
         r = probe(u)
         if r == "trusted":
-            emit("WARN", "urllib TRUSTS %s: Python's standard library on Windows ignores the Untrusted store. Known limitation with no fix yet; pip and requests are covered by the pip/certifi upgrades" % u)
+            emit("WARN", "urllib TRUSTS %s: Python's standard library on Windows ignores the Untrusted store. Known limitation; the CPython fix (gh-160040) has not shipped yet. pip and requests are covered by the pip/certifi upgrades" % u)
         elif r == "rejected":
             emit("PASS", "urllib rejects %s" % u)
+        elif r == "inconclusive":
+            emit("WARN", "urllib reached something other than the test site at %s (a proxy may be intercepting TLS)" % u)
 '@ | Set-Content -Path $pyTest -Encoding UTF8
 $pys = New-Object System.Collections.Generic.List[string]
 $launcher = Get-Command py.exe -ErrorAction SilentlyContinue
@@ -180,6 +236,19 @@ else {
         Emit WARN lockfile uv.lock "$($locks.Count) repositories under $where pin certifi older than 2026.10.19, so uv sync reverts their virtualenv fix until the pin is bumped. List: $lockList (fix-recipes: lock files)"
     }
 }
+# Tools installed with pipx or uv tool live in their own virtualenvs, each with its own pip and certifi.
+foreach ($root in @("$env:USERPROFILE\pipx\venvs", "$env:USERPROFILE\.local\pipx\venvs", "$env:APPDATA\uv\tools")) {
+    if (-not (Test-Path $root)) { continue }
+    foreach ($tv in Get-ChildItem $root -Directory -ErrorAction SilentlyContinue) {
+        $tpy = Join-Path $tv.FullName 'Scripts\python.exe'; if (-not (Test-Path $tpy)) { continue }
+        foreach ($di in Get-ChildItem (Join-Path $tv.FullName 'Lib\site-packages') -Directory -ErrorAction SilentlyContinue) {
+            if ($di.Name -notmatch '^(certifi|pip)-([\d.]+)\.dist-info$') { continue }
+            $pkg = $Matches[1]; $tvv = $Matches[2]; $need = if ($pkg -eq 'certifi') { '2026.10.19' } else { '26.2.2' }
+            $old = $false; try { $old = [version]$tvv -lt [version]$need } catch { $null = $_ }  # deliberately ignored
+            if ($old) { Emit FAIL python $tpy "tool environment: $pkg $tvv (fixed: $need; fix with fix-python-env.ps1 on this python)" }
+        }
+    }
+}
 
 # ---- Node.js ----
 function Get-NodeFixed($v) { switch ($v.Split('.')[0]) { '22' { '22.23.4' } '24' { '24.22.1' } '26' { '26.12.1' } default { $null } } }
@@ -214,7 +283,9 @@ if ($go) {
 $uv = Get-Command uv.exe -ErrorAction SilentlyContinue
 if ($uv) {
     $v = ((& $uv.Source --version) -split ' ')[1]
-    if ([version]$v -ge [version]'0.13.4') { Emit PASS uv uv "uv $v" } else { Emit FAIL uv uv "uv $v (fixed: 0.13.4)" }
+    if ([version]$v -lt [version]'0.13.4') { Emit FAIL uv uv "uv $v (fixed: 0.13.4; 0.13.5 also distrusts the compromised keys)" }
+    elseif ([version]$v -lt [version]'0.13.5') { Emit WARN uv uv "uv $v rejects the test hosts, but 0.13.5 also distrusts the compromised keys and ships fixed Pythons; upgrade, then run uv python upgrade" }
+    else { Emit PASS uv uv "uv $v" }
 }
 # Tools with one fixed release each; the agent running this skill may itself be exposed (claude).
 function Test-RemTool($area, $name, $exe, [string[]]$versionArgs, $field, $fixed) {
@@ -233,10 +304,18 @@ Test-RemTool conda conda 'conda.exe' @('--version') 1 '26.9.4'
 Test-RemTool mise mise 'mise.exe' @('--version') 0 '2026.10.17'
 Test-RemTool pixi pixi 'pixi.exe' @('--version') 1 '0.82.1'
 Test-RemTool agent 'Claude Code' 'claude.exe' @('--version') 0 '2.1.303'
+Test-RemTool cloudflared cloudflared 'cloudflared.exe' @('--version') 2 '2026.10.2'
+if (Get-Command az -ErrorAction SilentlyContinue) { Emit WARN azure-cli az 'Azure CLI bundles an old certifi and has no fixed release yet; avoid it on untrusted networks' }
 $ff = Get-ItemProperty 'HKLM:\SOFTWARE\Mozilla\Mozilla Firefox' -ErrorAction SilentlyContinue
-if ($ff) { Emit INFO browsers firefox "Firefox $($ff.CurrentVersion): update it from Help > About Firefox" }
+if ($ff) {
+    # The release channel is fixed in 158.0.1, the ESR channels in 153.5.1 and 115.43.1.
+    $fv = ($ff.CurrentVersion -split ' ')[0]; $fvv = $fv -replace '[^0-9.].*$', ''
+    $need = if ($fvv -like '153.*') { '153.5.1' } elseif ($fvv -like '115.*') { '115.43.1' } else { '158.0.1' }
+    $ok = $false; try { $ok = [version]$fvv -ge [version]$need } catch { $null = $_ }  # deliberately ignored
+    if ($ok) { Emit PASS browser Firefox "Firefox $fv" } else { Emit FAIL browser Firefox "Firefox $fv (fixed: $need); update it from Help > About Firefox" }
+}
 Emit INFO browsers manual "Open $RemBadEmsign, $RemBadAaa, $RemBadEmsignNoCt, and $RemBadAaaNoCt in every browser; each must show a certificate error"
-Emit INFO apps manual 'Update Electron apps (Slack, Zoom, VS Code, 1Password, Claude Desktop) and Docker Desktop (fixed: 4.96.2) to their latest versions'
+Emit INFO apps manual 'Update Electron apps (Slack 4.52.182 or later, Zoom, VS Code, 1Password, Claude Desktop) and Docker Desktop (4.96.3 or later; Docker ships its fix in batches, so install each patch release)'
 
 $lines | Set-Content -Path $report -Encoding UTF8
 Write-Output "# Report saved to $report"

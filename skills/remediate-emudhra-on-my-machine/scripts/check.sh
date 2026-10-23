@@ -14,16 +14,25 @@ OS="$(uname -s)"
 emit() { printf '%s|%s|%s|%s\n' "$1" "$2" "$3" "$4"; }
 
 # curl_verdict BIN URL -> trusted | rejected | error. Only a certificate verification failure counts as rejected.
+# A test host's reply contains this text; any other reply came from a TLS-intercepting proxy, so it says
+# nothing about this machine's trust (the incident site's own checker treats it the same way).
+REM_SUCCESS_TEXT="Your client successfully connected to the site."
 curl_verdict() {
-  local err rc=0
-  err="$("$1" -sS -o /dev/null -m 20 "$2" 2>&1 > /dev/null)" || rc=$?
-  if [ "$rc" -eq 0 ]; then
+  local err rc=0 body
+  body="$(mktemp)"
+  err="$("$1" -sS -o "$body" -m 20 "$2" 2>&1 > /dev/null)" || rc=$?
+  if [ "$rc" -eq 0 ] && [ "$2" != "$REM_CONTROL" ] && ! grep -qF "$REM_SUCCESS_TEXT" "$body"; then
+    rm -f "$body"
+    echo inconclusive
+  elif [ "$rc" -eq 0 ]; then
+    rm -f "$body"
     echo trusted
   elif [ "$rc" -eq 77 ]; then
     echo error
   elif [ "$rc" -eq 60 ] || printf '%s' "$err" | grep -qiE 'certificate|unable to get local issuer|self.signed|revoked'; then
     echo rejected
   else echo error; fi
+  rm -f "$body"
 }
 
 echo "# eMudhra remediation check $(date -u +%Y-%m-%dT%H:%M:%SZ) on $OS"
@@ -40,7 +49,7 @@ if [ "$OS" = Darwin ]; then
   if [ "$major" -ge 27 ] || { [ "$major" -eq 26 ] && rem_ver_ge "$v" 26.7; } || { [ "$major" -eq 15 ] && rem_ver_ge "$v" 15.8; }; then
     emit PASS os macOS "$v"
   elif [ "$major" -le 14 ]; then
-    emit WARN os macOS "$v is no longer getting all security fixes. Apple has not said which versions carry its October 19 block, and a separate Apple certificate fix (CVE-2026-86881) shipped only in 15.8, 26.7, and 27. Plan an upgrade"
+    emit WARN os macOS "$v is no longer getting all security fixes. Apple's block (since October 22) arrives as background trust data, not in an OS release, but a separate Apple certificate fix (CVE-2026-86881) shipped only in 15.8, 26.7, and 27. Plan an upgrade"
   else
     emit WARN os macOS "$v: install the latest update in System Settings > General > Software Update (a separate Apple certificate fix, CVE-2026-86881, is in 15.8, 26.7, and 27)"
   fi
@@ -66,6 +75,16 @@ elif [ -e /etc/NIXOS ]; then
 else
   emit INFO os Linux "$([ -r /etc/os-release ] && . /etc/os-release && echo "$PRETTY_NAME")"
 fi
+if [ "$OS" = Darwin ] && [ -r /opt/local/share/curl/curl-ca-bundle.crt ]; then
+  # MacPorts curl and git read their own bundle (fixed in MacPorts curl-ca-bundle 8.23.0_1).
+  rc=0
+  rem_pem_bundle_has_bad_roots /opt/local/share/curl/curl-ca-bundle.crt || rc=$?
+  case "$rc" in
+    0) emit FAIL truststore /opt/local/share/curl/curl-ca-bundle.crt "MacPorts bundle contains an affected root (fixed: curl-ca-bundle 8.23.0_1; sudo port selfupdate && sudo port upgrade curl-ca-bundle)" ;;
+    1) emit PASS truststore /opt/local/share/curl/curl-ca-bundle.crt "MacPorts bundle: affected roots absent" ;;
+    *) emit WARN truststore /opt/local/share/curl/curl-ca-bundle.crt "could not inspect the MacPorts bundle (no openssl command)" ;;
+  esac
+fi
 if [ "$OS" = Linux ] && grep -qi microsoft /proc/version 2> /dev/null; then
   emit WARN os WSL "This is a WSL distribution inside Windows. Windows itself needs its own check: run check.ps1 with powershell.exe, and check any other WSL distributions too"
 fi
@@ -89,7 +108,11 @@ if [ "$OS" = Linux ]; then
   if command -v dpkg-query > /dev/null && v="$(dpkg-query -W -f='${Version}' ca-certificates 2> /dev/null)"; then
     emit INFO truststore ca-certificates "Debian/Ubuntu package $v"
   elif command -v rpm > /dev/null && v="$(rpm -q --qf '%{VERSION}-%{RELEASE}' ca-certificates 2> /dev/null)"; then
-    if rem_ver_ge "$v" 2026.2.92; then
+    # Fixed version numbers differ by distribution (Oracle Linux's fixed builds are numbered 2025.2.80_...),
+    # so only Fedora's is compared here; the bundle and live tests decide everywhere.
+    if [ "$(. /etc/os-release 2> /dev/null && echo "${ID:-}")" != fedora ]; then
+      emit INFO truststore ca-certificates "package $v (see fix-recipes for this distribution's fixed release)"
+    elif rem_ver_ge "$v" 2026.2.92; then
       emit INFO truststore ca-certificates "package $v (the fixed release is 2026.2.92_v9.0.319 or later)"
     else emit INFO truststore ca-certificates "package $v; the fixed release is 2026.2.92_v9.0.319 (admin script upgrades it)"; fi
   elif command -v pacman > /dev/null && v="$(pacman -Q ca-certificates-mozilla 2> /dev/null | awk '{print $2}')" && [ -n "$v" ]; then
@@ -112,6 +135,7 @@ if [ "$NET" = 1 ]; then
       case "$(curl_verdict "$c" "$u")" in
         rejected) emit PASS curl "$c" "rejects $u" ;;
         trusted) emit FAIL curl "$c" "TRUSTS $u (system trust store needs the admin fix)" ;;
+        inconclusive) emit WARN curl "$c" "reached something other than the test site at $u (a proxy may be intercepting TLS); not a certificate result" ;;
         *) emit WARN curl "$c" "could not test $u (network error, not a certificate result)" ;;
       esac
     done
@@ -162,25 +186,58 @@ if fixed_py and tuple(sys.version_info[:3]) < fixed_py and not system_owned:
     emit("WARN", "Python %s: the patched release on this line is %s; upgrade when you can" % (sys.version.split()[0], ".".join(map(str, fixed_py))))
 if sys.version_info < (3, 10) and not system_owned:
     emit("WARN", "Python %s is end of life; the fixed pip needs 3.10+%s. Remove it if nothing uses it" % (ver, " and Python 2 cannot run the fixed certifi (the last release for it is 2021.10.8)" if sys.version_info[0] < 3 else ""))
-pip_cert = os.environ.get("PIP_CERT", "")
+import re
+def pip_probe(u):
+    # A live test of this interpreter's pip: an SSL verification error means it rejects the host. pip keeps
+    # its own certificate list alongside any PIP_CERT or system store, so only a live test is conclusive.
+    import subprocess, tempfile, shutil
+    d = tempfile.mkdtemp()
+    try:
+        p = subprocess.Popen([sys.executable, "-B", "-m", "pip", "download", "--no-deps", "--no-cache-dir",
+                              "--disable-pip-version-check", "--retries", "0", "--timeout", "20", "-d", d,
+                              "--index-url", u.rstrip("/") + "/simple/", "remediate-emudhra-probe"],
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        out = p.communicate()[0].decode("utf-8", "replace")
+    except Exception:
+        return "error"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    if re.search(r"CERTIFICATE_VERIFY_FAILED|certificate verify failed|SSLCertVerificationError|SSLError", out):
+        return "rejected"
+    if re.search(r"No matching distribution|Could not find a version", out):
+        return "trusted"
+    return "error"
 try:
     import pip
     pv = pip.__version__
-    try:
-        from pip._vendor import certifi as vc
-        vwhere = vc.where()
-    except Exception:
-        vwhere = ""
     if vt(pv) >= FIX_PIP:
         emit("PASS", "pip %s" % pv)
-    elif pip_cert in SYSTEM_BUNDLES or vwhere in SYSTEM_BUNDLES:
-        emit("PASS", "pip %s uses the system trust store (%s)" % (pv, pip_cert or vwhere))
     elif "/uv/python/" in label:
         emit("INFO", "pip %s in a uv-managed Python; uv and its virtualenvs don't use it. Optional: uv python upgrade" % pv)
     else:
-        emit("FAIL", "pip %s (fixed: 26.2.2)" % pv)
+        live = [pip_probe(u) for u in (control, bad1, bad2)] if net == "1" else []
+        if live == ["trusted", "rejected", "rejected"]:
+            emit("PASS", "pip %s rejects both test hosts (live test)" % pv)
+        elif live[:1] == ["trusted"] and "trusted" in live[1:]:
+            emit("FAIL", "pip %s TRUSTS a compromised chain (live test; fixed: 26.2.2)" % pv)
+        else:
+            emit("FAIL", "pip %s (fixed: 26.2.2; no conclusive live test)" % pv)
 except Exception:
     pass
+meta = os.path.join(sys.prefix, "conda-meta")
+if os.path.isdir(meta):
+    # conda's OpenSSL and the ssl module in a conda environment read $PREFIX/ssl/cacert.pem, from this package.
+    import glob, json
+    recs = [f for f in glob.glob(os.path.join(meta, "ca-certificates-*.json")) if re.match(r"ca-certificates-\d", os.path.basename(f))]
+    if recs:
+        try:
+            rec = json.load(open(recs[0]))
+            cav, chan = rec.get("version", ""), "%s %s" % (rec.get("channel", ""), rec.get("url", ""))
+        except Exception:
+            cav, chan = "", ""
+        need = (2026, 10, 19) if "conda-forge" in chan else (2026, 10, 20)
+        if cav:
+            emit("PASS" if vt(cav) >= need else "FAIL", "conda ca-certificates %s (fixed: %s)" % (cav, ".".join(map(str, need))))
 try:
     import certifi
     cv, cwhere = certifi.__version__, certifi.where()
@@ -216,7 +273,9 @@ if net == "1":
         from urllib2 import urlopen
     def probe(u):
         try:
-            urlopen(u, timeout=20); return "trusted"
+            body = urlopen(u, timeout=20).read(4096).decode("utf-8", "replace")
+            # The test hosts answer with this text; anything else came from a TLS-intercepting proxy.
+            return "trusted" if (u == control or "successfully connected" in body) else "inconclusive"
         except Exception as e:
             s = repr(e)
             return "rejected" if ("CERTIFICATE_VERIFY_FAILED" in s or "SSLCertVerificationError" in s) else "error"
@@ -228,7 +287,7 @@ if net == "1":
     else:
         for u in (bad1, bad2):
             r = probe(u)
-            emit({"rejected": "PASS", "trusted": "FAIL"}.get(r, "WARN"), "urllib %s %s" % ({"rejected": "rejects", "trusted": "TRUSTS"}.get(r, "could not test"), u))
+            emit({"rejected": "PASS", "trusted": "FAIL"}.get(r, "WARN"), "urllib %s %s" % ({"rejected": "rejects", "trusted": "TRUSTS", "inconclusive": "reached something other than the test site at"}.get(r, "could not test"), u))
 PY
 pys=""
 for p in $(type -ap python3 2> /dev/null) "$HOME"/.pyenv/versions/*/bin/python3 /opt/homebrew/bin/python3* /usr/local/bin/python3* \
@@ -269,6 +328,17 @@ if [ "$locks" -gt 0 ]; then
 else
   rm -f "$LOCKS"
 fi
+# Tools installed with pipx or uv tool live in their own virtualenvs, each with its own pip and certifi.
+for tv in "$HOME"/.local/pipx/venvs/* "$HOME"/.local/share/pipx/venvs/* "$HOME"/.local/share/uv/tools/*; do
+  [ -x "$tv/bin/python" ] || continue
+  for di in "$tv"/lib/python*/site-packages/certifi-*.dist-info "$tv"/lib/python*/site-packages/pip-*.dist-info; do
+    [ -d "$di" ] || continue
+    n="$(basename "$di" .dist-info)"
+    pkg="${n%%-*}" v="${n#*-}"
+    case "$pkg" in certifi) need=2026.10.19 ;; *) need=26.2.2 ;; esac
+    if ! rem_ver_ge "$v" "$need"; then emit FAIL python "$tv/bin/python" "tool environment: $pkg $v (fixed: $need; fix with fix-python-env.sh on this python)"; fi
+  done
+done
 
 # ---- Node.js ----
 node_fixed() { # VERSION -> prints required minimum or "none"
@@ -346,7 +416,11 @@ if command -v go > /dev/null; then
 fi
 if command -v uv > /dev/null; then
   v="$(uv --version | awk '{print $2}')"
-  if rem_ver_ge "$v" 0.13.4; then emit PASS uv uv "uv $v"; else emit FAIL uv uv "uv $v (fixed: 0.13.4)"; fi
+  if ! rem_ver_ge "$v" 0.13.4; then
+    emit FAIL uv uv "uv $v (fixed: 0.13.4; 0.13.5 also distrusts the compromised keys)"
+  elif ! rem_ver_ge "$v" 0.13.5; then
+    emit WARN uv uv "uv $v rejects the test hosts, but 0.13.5 also distrusts the compromised keys and ships fixed Pythons; upgrade, then run uv python upgrade"
+  else emit PASS uv uv "uv $v"; fi
 fi
 if command -v rustup > /dev/null; then
   v="$(rustup --version 2> /dev/null | awk '{print $2}')"
@@ -371,6 +445,19 @@ if command -v mise > /dev/null; then tool_ver mise mise 2026.10.17 "$(mise --ver
 if command -v pixi > /dev/null; then tool_ver pixi pixi 0.82.1 "$(pixi --version 2> /dev/null | awk '{print $2}')"; fi
 # The agent running this skill may itself be exposed.
 if command -v claude > /dev/null; then tool_ver agent "Claude Code" 2.1.303 "$(claude --version 2> /dev/null | awk '{print $1}')"; fi
+if command -v cloudflared > /dev/null; then tool_ver cloudflared cloudflared 2026.10.2 "$(cloudflared --version 2> /dev/null | awk '{print $3}')"; fi
+command -v az > /dev/null && emit WARN azure-cli az "Azure CLI bundles an old certifi and has no fixed release yet; avoid it on untrusted networks"
+# Firefox: the release channel is fixed in 158.0.1, the ESR channels in 153.5.1 and 115.43.1.
+ff=""
+if [ -r /Applications/Firefox.app/Contents/Info.plist ]; then
+  ff="$(defaults read /Applications/Firefox.app/Contents/Info CFBundleShortVersionString 2> /dev/null)"
+elif command -v firefox > /dev/null; then
+  ff="$(firefox --version 2> /dev/null | awk '{print $NF}')"
+fi
+if [ -n "$ff" ]; then
+  case "$ff" in 153.* | 115.*) case "$ff" in 153.*) need=153.5.1 ;; *) need=115.43.1 ;; esac ;; *) need=158.0.1 ;; esac
+  tool_ver browser Firefox "$need" "$ff"
+fi
 if command -v brew > /dev/null; then
   BREW_PREFIX="$(brew --prefix)"
   # brew_ver FORMULA -> the version in use (the linked keg), else the newest installed. The fix recipes keep
@@ -408,6 +495,6 @@ if command -v brew > /dev/null; then
 fi
 
 emit INFO browsers manual "Open $REM_BAD_EMSIGN, $REM_BAD_AAA, $REM_BAD_EMSIGN_NOCT, and $REM_BAD_AAA_NOCT in every browser; each must show a certificate error"
-emit INFO apps manual "Update Electron apps (Slack, Zoom, VS Code, 1Password, Claude Desktop) and Docker Desktop (fixed: 4.96.2) to their latest versions"
+emit INFO apps manual "Update Electron apps (Slack 4.52.182 or later, Zoom, VS Code, 1Password, Claude Desktop) and Docker Desktop (4.96.3 or later; Docker ships its fix in batches, so install each patch release)"
 echo "# Report saved to $REPORT"
 rem_log "vetted-script:check.sh" "read-only check" "report $REPORT" "nothing to undo"

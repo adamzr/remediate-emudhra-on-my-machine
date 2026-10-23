@@ -74,10 +74,19 @@ if xcode-select -p > /dev/null 2>&1; then
   elif [ "$DRY" = 1 ]; then echo "   would append PIP_CERT=/etc/ssl/cert.pem to $F"; else
     bak="$(rem_backup "$F")"
     case "$bak" in *.absent) undo="sudo rm -f $(rem_q "$F")" ;; *) undo="$(rem_restore_cmd "$bak" "$F" sudo)" ;; esac
-    echo 'import os; os.environ.setdefault("PIP_CERT", "/etc/ssl/cert.pem")' | sudo tee -a "$F" > /dev/null
-    sudo chmod 644 "$F"
-    rem_log "$SRC" "set PIP_CERT for Apple's python3" "$F" "$undo"
-    echo "   added to $F (an Xcode or Command Line Tools update may undo this; re-run the script then)"
+    # Inside /Applications/Xcode.app, macOS App Management can refuse the write even with sudo. That must not
+    # stop the keychain and JDK steps below, so a failure here is reported and the script carries on.
+    if echo 'import os; os.environ.setdefault("PIP_CERT", "/etc/ssl/cert.pem")' | sudo tee -a "$F" > /dev/null 2>&1 &&
+      sudo chmod 644 "$F"; then
+      rem_log "$SRC" "set PIP_CERT for Apple's python3" "$F" "$undo"
+      echo "   added to $F (an Xcode or Command Line Tools update may undo this; re-run the script then)"
+    else
+      case "$bak" in *.absent) rm -f "$bak" ;; esac
+      echo "   could not write $F (macOS blocks changes inside Xcode.app unless your terminal has App Management"
+      echo "   permission). Nothing was changed; the keychain and JDK steps below still run. Alternative, which"
+      echo "   applies to every pip you run: /usr/bin/python3 -m pip config --user set global.cert /etc/ssl/cert.pem"
+      echo "   (undo: /usr/bin/python3 -m pip config --user unset global.cert)"
+    fi
   fi
 else
   echo "   Command Line Tools not installed; nothing to do"
