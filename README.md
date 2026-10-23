@@ -77,7 +77,7 @@ Some items need you, or a vendor:
 
 - **Operating system and browser updates.** The skill tells you what to install.
 - **Phones.** Update iOS to 26.7 or later. Restart Android.
-- **JDKs you can't upgrade yet.** Oracle, OpenJDK, Azul, and some Homebrew JDKs have fixed builds, but Temurin and Corretto had none as of October 23. Until a fix reaches your JDK, the admin script removes the affected roots from its `cacerts`.
+- **JDKs you can't upgrade yet.** Oracle, OpenJDK, Azul, and some Homebrew JDKs have fixed builds, but Temurin and Corretto had none as of October 22. Until a fix reaches your JDK, the admin script removes the affected roots from its `cacerts`.
 - **iPhone and iPad.** Apple's block arrives as background trust data; there is nothing to install, so keep automatic security responses on.
 - **Old Python environments.** Python 3.9 and older can't run the fixed pip, and conda's fixed certifi needs Python 3.10 (3.11 on conda-forge). The skill reports those environments as open.
 - **Python's urllib on Windows** ignores the store where Microsoft's block lives. No fix exists yet. pip and requests are covered.

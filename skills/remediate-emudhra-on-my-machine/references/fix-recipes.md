@@ -28,7 +28,7 @@ Before running a recipe, record what it replaces (the old version or old setting
 
 ## Fixed versions
 
-From <https://emudhra.we-have-a-problem.com/> and the vendors' own advisories, as of October 23, 2026. The site keeps adding fixed releases, so check it when a tool is not listed here.
+From <https://emudhra.we-have-a-problem.com/> and the vendors' own advisories, as of October 22, 2026. The site keeps adding fixed releases, so check it when a tool is not listed here.
 
 | Component | Minimum fixed version |
 |---|---|
@@ -185,7 +185,7 @@ Undo: `git config --global http.sslBackend <old>`, or `git config --global --uns
 
 Fixed releases: 27.0.1.0.2, 25.0.5.0.2, 21.0.13.0.2, 17.0.21.0.2, 11.0.33.0.2, and 8u511 from Oracle and OpenJDK ([OpenJDK advisory, CVE-2026-91403](https://openjdk.org/groups/vulnerability/advisories/2026-10-21), [Oracle](https://ops.java/emudhra)), and Azul's fixed builds. A patched JDK blocks the compromised intermediates in `lib/security/blocked.certs` (`blacklisted.certs` on JDK 8) and keeps the roots in `cacerts`.
 
-Not every vendor has shipped yet (as of October 23): **Temurin (Adoptium) and Amazon Corretto have no fixed builds**, and of Homebrew's JDKs only `openjdk@17`, `openjdk@21`, and `openjdk@25` are fixed (`openjdk` 27.0.1, `openjdk@11`, and `openjdk@8` are not). JDKs from Debian, Ubuntu, Fedora, RHEL, Oracle Linux, Arch, and Gentoo use the OS certificate store, so the OS's `ca-certificates` fix covers them.
+Not every vendor has shipped yet (as of October 22): **Temurin (Adoptium) and Amazon Corretto have no fixed builds**, and of Homebrew's JDKs only `openjdk@17`, `openjdk@21`, and `openjdk@25` are fixed (`openjdk` 27.0.1, `openjdk@11`, and `openjdk@8` are not). JDKs from Debian, Ubuntu, Fedora, RHEL, Oracle Linux, Arch, and Gentoo use the OS certificate store, so the OS's `ca-certificates` fix covers them.
 
 The check tests each JDK live against the test hosts when it can (JDK 11 or later, with network access). Otherwise it treats a JDK as safe when `blocked.certs` lists all 16 compromised intermediates, or when `cacerts` no longer has the two affected roots.
 

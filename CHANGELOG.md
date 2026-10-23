@@ -2,9 +2,9 @@
 
 All notable changes to this skill are recorded here. Versions follow [semver](https://semver.org) and match `metadata.version` in `SKILL.md`.
 
-## 1.2.0 (October 23, 2026)
+## 1.2.0 (October 22, 2026)
 
-Follows the incident site, vendor advisories, and distribution errata as of October 23.
+Follows the incident site, vendor advisories, and distribution errata as of October 22.
 
 - **pip is tested live.** pip trusts its own bundled certificates alongside `PIP_CERT` and the system store; on a Linux machine with a fixed store, pip 25.2 still trusted the compromised chain. The check had reported such pips as PASS ("uses the system trust store"); it now tests each pip older than 26.2.2 against the test hosts.
 - **conda's `ca-certificates` package**, which conda's OpenSSL and Python's `ssl` module read, is checked per environment and included in the conda command (2026.10.20 on defaults, 2026.10.19 on conda-forge; none for Intel Macs on defaults). Environments too old for the fixed certifi still get the command for what can be fixed, then exit 4.
