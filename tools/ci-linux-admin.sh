@@ -18,37 +18,47 @@
 #
 # Usage: [HOLD=1] tools/ci-linux-admin.sh   (from the repository root)
 set -euo pipefail
-[ "$(id -u)" -eq 0 ] || { echo "run as root inside a disposable container" >&2; exit 2; }
+[ "$(id -u)" -eq 0 ] || {
+  echo "run as root inside a disposable container" >&2
+  exit 2
+}
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 . /etc/os-release
 echo "== Container: $PRETTY_NAME"
 case " $ID ${ID_LIKE:-} " in
-  *" debian "*|*" ubuntu "*)
+  *" debian "* | *" ubuntu "*)
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq && apt-get install -y -qq curl sudo ca-certificates openssl util-linux >/dev/null ;;
-  *" fedora "*|*" rhel "*|*" centos "*|*" amzn "*)
-    dnf install -y -q sudo openssl p11-kit-trust util-linux-script >/dev/null 2>&1 || dnf install -y -q sudo openssl p11-kit-trust util-linux
-    command -v curl >/dev/null || dnf install -y -q curl ;;
+    apt-get update -qq && apt-get install -y -qq curl sudo ca-certificates openssl util-linux > /dev/null
+    ;;
+  *" fedora "* | *" rhel "* | *" centos "* | *" amzn "*)
+    dnf install -y -q sudo openssl p11-kit-trust util-linux-script > /dev/null 2>&1 || dnf install -y -q sudo openssl p11-kit-trust util-linux
+    command -v curl > /dev/null || dnf install -y -q curl
+    ;;
   *" arch "*)
     # pacman's download sandbox needs seccomp and Landlock, which container runtimes (and emulation) often
     # block. This is test-container setup only; it does not change what the admin script does.
     sed -i 's/^#\?DisableSandboxSyscalls/DisableSandboxSyscalls/; s/^#\?DisableSandboxFilesystem/DisableSandboxFilesystem/; s/^DownloadUser/#DownloadUser/' /etc/pacman.conf
-    pacman -Sy --noconfirm --needed sudo curl openssl p11-kit util-linux >/dev/null ;;
-  *) echo "unsupported test container: $ID" >&2; exit 2 ;;
+    pacman -Sy --noconfirm --needed sudo curl openssl p11-kit util-linux > /dev/null
+    ;;
+  *)
+    echo "unsupported test container: $ID" >&2
+    exit 2
+    ;;
 esac
 if [ "${HOLD:-0}" = 1 ]; then
   echo "== Holding the CA package to simulate a distribution without its fix"
   case " $ID ${ID_LIKE:-} " in
-    *" debian "*|*" ubuntu "*) apt-mark hold ca-certificates ;;
-    *" fedora "*|*" rhel "*|*" centos "*|*" amzn "*) echo 'exclude=ca-certificates' >> /etc/dnf/dnf.conf ;;
+    *" debian "* | *" ubuntu "*) apt-mark hold ca-certificates ;;
+    *" fedora "* | *" rhel "* | *" centos "* | *" amzn "*) echo 'exclude=ca-certificates' >> /etc/dnf/dnf.conf ;;
     *" arch "*)
       printf '%s\n' '#!/bin/sh' '# Test only: decline every pacman prompt.' 'yes n | /usr/bin/pacman "$@"' > /usr/local/bin/pacman
-      chmod 755 /usr/local/bin/pacman ;;
+      chmod 755 /usr/local/bin/pacman
+      ;;
   esac
 fi
 
-id tester >/dev/null 2>&1 || useradd -m tester
+id tester > /dev/null 2>&1 || useradd -m tester
 echo 'tester ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/tester
 chmod 440 /etc/sudoers.d/tester
 SKILL="$REPO/skills/remediate-emudhra-on-my-machine"
@@ -59,7 +69,10 @@ check() { as_tester "bash '$SKILL/scripts/check.sh'" | tee "/tmp/check-$1.txt" |
 
 echo "== Check before"
 check before
-grep -q '^FAIL|network|' /tmp/check-before.txt && { echo "no network in the container; cannot test" >&2; exit 1; }
+grep -q '^FAIL|network|' /tmp/check-before.txt && {
+  echo "no network in the container; cannot test" >&2
+  exit 1
+}
 
 echo "== Dry run"
 as_tester "bash '$SKILL/scripts/admin-fix-linux.sh' --dry-run"
@@ -87,9 +100,12 @@ if [ -z "$undos" ]; then
   echo "OK: no trust-store change was needed (the distribution's package already rejects both chains)"
   exit 0
 fi
-printf '%s\n' "$undos" | while IFS= read -r u; do echo "+ $u"; as_tester "$u"; done
+printf '%s\n' "$undos" | while IFS= read -r u; do
+  echo "+ $u"
+  as_tester "$u"
+done
 # Debian's undo regenerates the bundle itself; Fedora and Arch need one update-ca-trust after the files go.
-command -v update-ca-trust >/dev/null && update-ca-trust
+command -v update-ca-trust > /dev/null && update-ca-trust
 
 echo "== Check after undo"
 check undone

@@ -74,6 +74,7 @@ The fixes are easiest to apply through the skill, since it reads the results and
 ## Things it can't fix
 
 Some items need you, or a vendor:
+
 - **Operating system and browser updates.** The skill tells you what to install.
 - **Phones.** Update iOS to 26.7 or later. Restart Android.
 - **JDKs you can't upgrade yet.** Patched JDKs exist (27.0.1.0.2, 25.0.5.0.2, 21.0.13.0.2, 17.0.21.0.2, 11.0.33.0.2, 8u511), and upgrading is the fix. Until then, the admin script removes the affected roots from an unpatched JDK's `cacerts`.

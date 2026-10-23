@@ -1,5 +1,8 @@
 # Shared helpers for the remediate-emudhra-on-my-machine PowerShell scripts. Dot-source, don't run.
 # Windows PowerShell 5.1 compatible.
+# The variables below are read by the scripts that dot-source this file, which PSScriptAnalyzer can't see.
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '', Justification = 'Read by the scripts that dot-source this file')]
+param()
 
 $RemStateDir = if ($env:REMEDIATE_EMUDHRA_STATE_DIR) { $env:REMEDIATE_EMUDHRA_STATE_DIR } else { Join-Path $env:USERPROFILE '.remediate-emudhra' }
 $RemBackupDir = Join-Path $RemStateDir 'backups'
@@ -57,8 +60,8 @@ function Backup-RemFile($path) {
     Set-Content -Path "$dest.absent" -Value "$path did not exist"; return "$dest.absent"
 }
 
-# Get-RemIntermediates -> X509Certificate2 objects for the 16 compromised intermediates. Refuses anything unexpected.
-function Get-RemIntermediates {
+# Get-RemIntermediate -> X509Certificate2 objects for the 16 compromised intermediates. Refuses anything unexpected.
+function Get-RemIntermediate {
     $items = Get-Content -LiteralPath $RemManifest -Raw -Encoding UTF8 | ConvertFrom-Json
     $sha = [System.Security.Cryptography.SHA256]::Create()
     $certs = @(); $seen = @{}
@@ -75,7 +78,7 @@ function Get-RemIntermediates {
     return $certs
 }
 
-function Get-RemJdkHomes {
+function Get-RemJdkHome {
     $cands = New-Object System.Collections.Generic.List[string]
     if ($env:JAVA_HOME) { $cands.Add($env:JAVA_HOME) }
     $roots = @("$env:ProgramFiles\Java", "$env:ProgramFiles\Eclipse Adoptium", "$env:ProgramFiles\Microsoft", "$env:ProgramFiles\Zulu",
@@ -86,7 +89,7 @@ function Get-RemJdkHomes {
     $cands | Where-Object { Test-Path (Join-Path $_ 'bin\keytool.exe') } | ForEach-Object { (Resolve-Path $_).Path } | Sort-Object -Unique
 }
 
-function Get-RemCacerts($jdk) {
+function Get-RemCacertsFile($jdk) {
     foreach ($c in @((Join-Path $jdk 'lib\security\cacerts'), (Join-Path $jdk 'jre\lib\security\cacerts'))) { if (Test-Path $c) { return $c } }
     return $null
 }
@@ -166,15 +169,15 @@ function Get-RemJdkVerdict($jdk, $net) {
         if ($r -match '^trusted .*trusted') { return @{ Pass = $false; Detail = "Java $v TRUSTS a compromised chain (live test). Upgrade to $RemJdkFixed (preferred), or run the admin script" } }
     }
     if ((Get-RemJdkBlockedCount $jdk) -ge 16) { return @{ Pass = $true; Detail = "Java $v blocks all 16 compromised intermediates in blocked.certs" } }
-    $c = Get-RemCacerts $jdk
+    $c = Get-RemCacertsFile $jdk
     if (-not $c) { return @{ Pass = $true; Detail = 'no cacerts file' } }
-    $bad = @(Get-RemBadAliases (Join-Path $jdk 'bin\keytool.exe') $c)
+    $bad = @(Get-RemBadAlias (Join-Path $jdk 'bin\keytool.exe') $c)
     if ($bad.Count -eq 0) { return @{ Pass = $true; Detail = "Java ${v}: affected roots absent from cacerts" } }
     return @{ Pass = $false; Detail = "Java ${v}: cacerts still trusts $($bad -join ', '). Upgrade to $RemJdkFixed (preferred), or run the admin script" }
 }
 
-# Get-RemBadAliases KEYTOOL CACERTS -> aliases of the two affected roots present in the keystore.
-function Get-RemBadAliases($keytool, $cacerts) {
+# Get-RemBadAlias KEYTOOL CACERTS -> aliases of the two affected roots present in the keystore.
+function Get-RemBadAlias($keytool, $cacerts) {
     $alias = $null; $found = @()
     Invoke-RemNative $keytool @('-list', '-v', '-keystore', $cacerts, '-storepass', 'changeit') | ForEach-Object {
         if ($_ -match '^Alias name: (.+)$') { $alias = $Matches[1] }

@@ -2,6 +2,13 @@
 
 All notable changes to this skill are recorded here. Versions follow [semver](https://semver.org) and match `metadata.version` in `SKILL.md`.
 
+## 1.1.1 (October 22, 2026)
+
+No behavior changes.
+
+- Shell scripts are formatted with shfmt (settings in `.editorconfig`); CI checks formatting, Markdown (markdownlint), workflows (actionlint), and PowerShell at warning level (PSScriptAnalyzer).
+- `tools/lint.sh` runs the same checks locally, and `tools/validate_skill.py --since` enforces a version bump and a CHANGELOG entry for changes to the skill.
+
 ## 1.1.0 (October 22, 2026)
 
 The incident site now lists fixed releases for Java, Bun, and more tools; this release follows it.

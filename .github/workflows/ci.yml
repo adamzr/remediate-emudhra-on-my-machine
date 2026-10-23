@@ -21,38 +21,73 @@ jobs:
     name: Lint and validate
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      SHFMT_VERSION: v3.14.1
+      SHFMT_SHA256: 76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf
+      ACTIONLINT_VERSION: 1.7.12
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The full history, so the version-bump rule can compare against the base branch.
+          fetch-depth: 0
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
+      - name: Install shfmt and actionlint (pinned, checksum-verified)
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/shfmt" "https://github.com/mvdan/sh/releases/download/$SHFMT_VERSION/shfmt_${SHFMT_VERSION}_linux_amd64"
+          echo "$SHFMT_SHA256  $RUNNER_TEMP/bin/shfmt" | sha256sum -c -
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tgz" "https://github.com/rhysd/actionlint/releases/download/v$ACTIONLINT_VERSION/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/actionlint.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/actionlint.tgz" -C "$RUNNER_TEMP/bin" actionlint
+          chmod +x "$RUNNER_TEMP/bin/shfmt" "$RUNNER_TEMP/bin/actionlint"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: shellcheck
         run: shellcheck -x -S warning "$SKILL"/scripts/*.sh tools/*.sh
+      - name: shfmt (formatting, from .editorconfig)
+        run: shfmt -d "$SKILL"/scripts/*.sh tools/*.sh
+      - name: actionlint
+        run: actionlint
+      - name: markdownlint
+        run: npx --yes markdownlint-cli2@0.24.0
       - name: bash syntax
         run: for f in "$SKILL"/scripts/*.sh tools/*.sh; do bash -n "$f"; done
       - name: PowerShell parse and PSScriptAnalyzer (errors)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $bad = 0
+          $bad = 0  # PSScriptAnalyzer settings: PSScriptAnalyzerSettings.psd1
           foreach ($f in @(Get-ChildItem "$env:SKILL/scripts" -Filter *.ps1) + @(Get-ChildItem tools -Filter *.ps1)) {
             $tokens = $null; $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$tokens, [ref]$errors) | Out-Null
             if ($errors) { $bad++; $errors | ForEach-Object { "::error file=$($f.Name)::$($_.Message)" } }
           }
-          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -RequiredVersion 1.24.0
-          $findings = @(Invoke-ScriptAnalyzer -Path "$env:SKILL/scripts" -Severity Error) + @(Invoke-ScriptAnalyzer -Path tools -Severity Error)
+          # PowerShell Gallery has transient outages; retry before failing the job.
+          foreach ($try in 1..4) {
+            try { Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -RequiredVersion 1.24.0 -ErrorAction Stop; break }
+            catch { if ($try -eq 4) { throw }; Start-Sleep -Seconds (15 * $try) }
+          }
+          $settings = './PSScriptAnalyzerSettings.psd1'
+          $findings = @(Invoke-ScriptAnalyzer -Path "$env:SKILL/scripts" -Settings $settings) + @(Invoke-ScriptAnalyzer -Path tools -Settings $settings)
           $findings | Format-Table -AutoSize | Out-String | Write-Output
           if ($bad -or $findings) { exit 1 }
       - name: Skill rules (tools/validate_skill.py)
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
         run: |
           python -m pip install --quiet pyyaml==6.0.3
-          python tools/validate_skill.py
+          if [ "$EVENT" = pull_request ]; then
+            python tools/validate_skill.py --since "origin/$BASE"
+          else
+            python tools/validate_skill.py
+          fi
       - name: Agent Skills reference validator
         run: npx --yes skills-ref@0.1.5 validate "$SKILL"
 
@@ -168,7 +203,7 @@ jobs:
           test -f "$d/SKILL.md"
           test -f "$d/scripts/check.sh"
           test -f "$d/references/fix-recipes.md"
-          test "$(ls "$d"/assets/compromised-intermediates/*.pem | wc -l)" -eq 16
+          test "$(find "$d/assets/compromised-intermediates" -name '*.pem' | wc -l)" -eq 16
           if [ -e "$d/README.md" ] || [ -e "$d/.github" ]; then echo "::error::repository files leaked into the skill"; exit 1; fi
           echo "installed: $(find "$d" -type f | wc -l) files"
       - name: Install from GitHub with the shorthand users type

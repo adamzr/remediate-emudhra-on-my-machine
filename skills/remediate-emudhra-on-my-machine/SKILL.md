@@ -15,7 +15,7 @@ compatibility: >-
   Needs an agent with a shell tool on the computer being fixed. macOS and Linux need bash and curl; Windows
   needs Windows PowerShell 5.1 or later. Network access is required for the live checks.
 metadata:
-  version: "1.1.0"
+  version: "1.1.1"
   tags: "security, incident-response, tls, certificates, trust-store, endpoint"
   repository: "https://github.com/adamzr/remediate-emudhra-on-my-machine"
 ---
@@ -26,7 +26,7 @@ metadata:
 
 ## Background (tell the user in two sentences)
 
-Eight eMudhra intermediate certificate keys were compromised, so an attacker who can intercept network traffic could impersonate websites to software that still trusts them. Browsers and operating systems received automatic blocks, but command-line tools, programming languages, and Java keep their own certificate lists and need fixing by hand, and some built-in tools need an admin step. Source: https://emudhra.we-have-a-problem.com/.
+Eight eMudhra intermediate certificate keys were compromised, so an attacker who can intercept network traffic could impersonate websites to software that still trusts them. Browsers and operating systems received automatic blocks, but command-line tools, programming languages, and Java keep their own certificate lists and need fixing by hand, and some built-in tools need an admin step. Source: <https://emudhra.we-have-a-problem.com/>.
 
 ## Ground rules (apply to every step)
 
@@ -136,7 +136,7 @@ Still open: <short list with reason, e.g. "macOS update to 26.7 (needs restart t
 Browsers tested against the test sites: <yes / no>
 ```
 
-If a vetted script or recipe failed, gave a wrong result, or missed a tool, offer to draft a bug report for https://github.com/adamzr/remediate-emudhra-on-my-machine/issues. Include the OS, the agent, the relevant check lines or error text, and what happened. Scrub it first: no usernames, hostnames, home-directory paths, IP addresses, tokens, or the action log. Show the draft and give the user the new-issue link to post it themselves. Run `gh issue create` only if the user asks for that and `gh auth status` succeeds. Suspected security problems in the skill go to the repository's private security advisory form instead, never to a public issue.
+If a vetted script or recipe failed, gave a wrong result, or missed a tool, offer to draft a bug report for <https://github.com/adamzr/remediate-emudhra-on-my-machine/issues>. Include the OS, the agent, the relevant check lines or error text, and what happened. Scrub it first: no usernames, hostnames, home-directory paths, IP addresses, tokens, or the action log. Show the draft and give the user the new-issue link to post it themselves. Run `gh issue create` only if the user asks for that and `gh auth status` succeeds. Suspected security problems in the skill go to the repository's private security advisory form instead, never to a public issue.
 
 End by telling the user where the action log and backups are, and that `actions.log` lists the undo command for every change.
 
