@@ -245,19 +245,20 @@ else {
     }
 }
 # Tools installed with pipx or uv tool live in their own virtualenvs, each with its own certifi. pipx keeps one shared
-# pip for all of them. Ask the tools where they keep them, then try the usual defaults.
+# pip for all of them. The folders come from pipx's and uv's own variables and their defaults. pipx itself is not run:
+# even `pipx environment` writes log files, and this check changes nothing.
 $toolRoots = New-Object System.Collections.Generic.List[string]
 $sharedRoots = New-Object System.Collections.Generic.List[string]
-$pipx = Get-Command pipx -ErrorAction SilentlyContinue
-if ($pipx) {
-    @(Invoke-RemNative $pipx.Source @('environment', '--value', 'PIPX_LOCAL_VENVS')) | Where-Object { $_ } | ForEach-Object { $toolRoots.Add($_.Trim()) }
-    @(Invoke-RemNative $pipx.Source @('environment', '--value', 'PIPX_SHARED_LIBS')) | Where-Object { $_ } | ForEach-Object { $sharedRoots.Add($_.Trim()) }
-}
+if ($env:PIPX_HOME) { $toolRoots.Add((Join-Path $env:PIPX_HOME 'venvs')); $sharedRoots.Add((Join-Path $env:PIPX_HOME 'shared')) }
+if ($env:PIPX_SHARED_LIBS) { $sharedRoots.Add($env:PIPX_SHARED_LIBS) }
 $uvCmd = Get-Command uv.exe -ErrorAction SilentlyContinue
 if ($uvCmd) { @(Invoke-RemNative $uvCmd.Source @('tool', 'dir')) | Where-Object { $_ } | ForEach-Object { $toolRoots.Add($_.Trim()) } }
 foreach ($d in @("$env:LOCALAPPDATA\pipx\pipx\venvs", "$env:USERPROFILE\pipx\venvs", "$env:USERPROFILE\.local\pipx\venvs", "$env:APPDATA\uv\data\tools")) { $toolRoots.Add($d) }
 foreach ($d in @("$env:LOCALAPPDATA\pipx\pipx\shared", "$env:USERPROFILE\pipx\shared", "$env:USERPROFILE\.local\pipx\shared")) { $sharedRoots.Add($d) }
-foreach ($sh in ($sharedRoots | Sort-Object -Unique)) {
+# Resolve each existing folder once, so a folder reached two ways is scanned once.
+$sharedRoots = @($sharedRoots | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) } | ForEach-Object { (Resolve-Path -LiteralPath $_).ProviderPath } | Sort-Object -Unique)
+$toolRoots = @($toolRoots | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) } | ForEach-Object { (Resolve-Path -LiteralPath $_).ProviderPath } | Sort-Object -Unique)
+foreach ($sh in $sharedRoots) {
     $spy = Join-Path $sh 'Scripts\python.exe'; if (-not (Test-Path $spy)) { continue }
     foreach ($di in Get-ChildItem (Join-Path $sh 'Lib\site-packages') -Directory -ErrorAction SilentlyContinue) {
         if ($di.Name -notmatch '^pip-([\d.]+)\.dist-info$') { continue }
@@ -265,7 +266,7 @@ foreach ($sh in ($sharedRoots | Sort-Object -Unique)) {
         if ($old) { Emit FAIL python $spy "pipx's shared pip $sv, used by every pipx tool (fixed: 26.2.2; fix with fix-python-env.ps1 on this python)" }
     }
 }
-foreach ($root in ($toolRoots | Sort-Object -Unique)) {
+foreach ($root in $toolRoots) {
     if (-not (Test-Path $root)) { continue }
     foreach ($tv in Get-ChildItem $root -Directory -ErrorAction SilentlyContinue) {
         $tpy = Join-Path $tv.FullName 'Scripts\python.exe'; if (-not (Test-Path $tpy)) { continue }

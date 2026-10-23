@@ -15,7 +15,7 @@ compatibility: >-
   Needs an agent with a shell tool on the computer being fixed. macOS and Linux need bash and curl; Windows
   needs Windows PowerShell 5.1 or later. Network access is required for the live checks.
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
   tags: "security, incident-response, tls, certificates, trust-store, endpoint"
   repository: "https://github.com/adamzr/remediate-emudhra-on-my-machine"
 ---
@@ -88,7 +88,7 @@ Work through the FAIL lines in this order, one action at a time, each using the 
 1. Python interpreters, with `scripts/fix-python-env.sh` or `.ps1` (vetted script), then project virtualenvs and `tool environment` lines (pipx and `uv tool`) as one listed batch. In conda environments the script also covers conda's own `ca-certificates` package. If uv FAILs, upgrade it (item 4) first, because the fix script uses `uv pip` for uv-created virtualenvs.
 2. Node.js: install the fixed release on the same line and make it the default.
 3. Git on Windows: upgrade to Git for Windows 2.56.0.windows.3, or switch it to the Windows certificate store.
-4. Go, uv, rustup, Deno, Bun, conda, mise, pixi, cloudflared, Claude Code, and Homebrew's `ca-certificates` and `certifi`. A MacPorts FAIL is fixed with `sudo port selfupdate && sudo port upgrade curl-ca-bundle`, which the user runs. A Java FAIL is fixed best by upgrading that JDK (see Java in `references/fix-recipes.md`); the admin step covers JDKs the user can't upgrade yet.
+4. Go, uv, rustup, Deno, Bun, conda, mise, pixi, cloudflared, Claude Code, and Homebrew's `ca-certificates` and `certifi`. A MacPorts FAIL is fixed with `sudo port selfupdate && sudo port upgrade curl-ca-bundle`; it needs their password, so give them the command to paste in their own terminal. A Java FAIL is fixed best by upgrading that JDK (see Java in `references/fix-recipes.md`); the admin step covers JDKs the user can't upgrade yet.
 5. Lock files that pin an old certifi (`WARN|lockfile`): one repository at a time, only for repositories the user works on, and only once uv PASSes.
 
 Every `brew upgrade` follows the Homebrew rules in `references/fix-recipes.md`: dry run first, then the two variables that keep old kegs and stop Homebrew from upgrading unrelated dependents.

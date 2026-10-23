@@ -222,7 +222,7 @@ if [ "$py310" = 0 ] && [ -n "$old_pip" ] && ! rem_ver_ge "$old_pip" 26.2.2; then
   add_open "pip $old_pip in $PY stays vulnerable: the fixed pip needs Python 3.10 or later (this is $pyver). Retire this environment, or rebuild it on Python 3.10 or later."
 fi
 if [ -z "$pkgs" ]; then
-  echo "Nothing for pip to upgrade in $PY."
+  if [ -z "$conda_pkgs" ]; then echo "Nothing for pip to upgrade in $PY."; fi
   finish 0
 fi
 

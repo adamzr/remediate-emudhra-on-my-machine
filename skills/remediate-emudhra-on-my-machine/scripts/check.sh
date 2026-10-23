@@ -337,16 +337,19 @@ else
   rm -f "$LOCKS"
 fi
 # Tools installed with pipx or uv tool live in their own virtualenvs, each with its own certifi. pipx keeps
-# one shared pip for all of them. Ask the tools where they keep them, then try the usual defaults.
+# one shared pip for all of them. The folders come from pipx's and uv's own variables and their defaults.
+# pipx itself is not run: even `pipx environment` writes log files, and this check changes nothing.
+# rem_real_dirs -> the existing directories among its input lines, resolved and without duplicates.
+rem_real_dirs() { while IFS= read -r d; do if [ -n "$d" ] && [ -d "$d" ]; then rem_realpath "$d"; fi; done | awk '!seen[$0]++'; }
 tool_roots="$({
-  if command -v pipx > /dev/null; then pipx environment --value PIPX_LOCAL_VENVS 2> /dev/null; fi
+  if [ -n "${PIPX_HOME:-}" ]; then printf '%s\n' "$PIPX_HOME/venvs"; fi
   if command -v uv > /dev/null; then uv tool dir 2> /dev/null; fi
   printf '%s\n' "$HOME/.local/share/pipx/venvs" "$HOME/Library/Application Support/pipx/venvs" "$HOME/.local/pipx/venvs" "$HOME/.local/share/uv/tools"
-} | awk 'NF && !seen[$0]++')"
+} | rem_real_dirs)"
 pipx_shared="$({
-  if command -v pipx > /dev/null; then pipx environment --value PIPX_SHARED_LIBS 2> /dev/null; fi
+  printf '%s\n' "${PIPX_SHARED_LIBS:-}" "${PIPX_HOME:+$PIPX_HOME/shared}"
   printf '%s\n' "$HOME/.local/share/pipx/shared" "$HOME/Library/Application Support/pipx/shared" "$HOME/.local/pipx/shared"
-} | awk 'NF && !seen[$0]++')"
+} | rem_real_dirs)"
 printf '%s\n' "$tool_roots" | while IFS= read -r root; do
   [ -d "$root" ] || continue
   for tv in "$root"/*; do printf '%s\n' "$tv"; done
