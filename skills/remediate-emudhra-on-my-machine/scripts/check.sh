@@ -80,9 +80,9 @@ if [ "$OS" = Darwin ] && [ -r /opt/local/share/curl/curl-ca-bundle.crt ]; then
   rc=0
   rem_pem_bundle_has_bad_roots /opt/local/share/curl/curl-ca-bundle.crt || rc=$?
   case "$rc" in
-    0) emit FAIL truststore /opt/local/share/curl/curl-ca-bundle.crt "MacPorts bundle contains an affected root (fixed: curl-ca-bundle 8.23.0_1; sudo port selfupdate && sudo port upgrade curl-ca-bundle)" ;;
-    1) emit PASS truststore /opt/local/share/curl/curl-ca-bundle.crt "MacPorts bundle: affected roots absent" ;;
-    *) emit WARN truststore /opt/local/share/curl/curl-ca-bundle.crt "could not inspect the MacPorts bundle (no openssl command)" ;;
+    0) emit FAIL macports /opt/local/share/curl/curl-ca-bundle.crt "MacPorts bundle contains an affected root (fixed: curl-ca-bundle 8.23.0_1; sudo port selfupdate && sudo port upgrade curl-ca-bundle)" ;;
+    1) emit PASS macports /opt/local/share/curl/curl-ca-bundle.crt "MacPorts bundle: affected roots absent" ;;
+    *) emit WARN macports /opt/local/share/curl/curl-ca-bundle.crt "could not inspect the MacPorts bundle (no openssl command)" ;;
   esac
 fi
 if [ "$OS" = Linux ] && grep -qi microsoft /proc/version 2> /dev/null; then
@@ -193,18 +193,24 @@ def pip_probe(u):
     import subprocess, tempfile, shutil
     d = tempfile.mkdtemp()
     try:
-        p = subprocess.Popen([sys.executable, "-B", "-m", "pip", "download", "--no-deps", "--no-cache-dir",
-                              "--disable-pip-version-check", "--retries", "0", "--timeout", "20", "-d", d,
-                              "--index-url", u.rstrip("/") + "/simple/", "remediate-emudhra-probe"],
-                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        env = dict(os.environ, PIP_REQUIRE_VIRTUALENV="0")
+        # -vv makes pip log urllib3's request lines, which show whether an HTTP response really came back.
+        p = subprocess.Popen([sys.executable, "-B", "-m", "pip", "download", "-vv", "--no-input", "--no-deps",
+                              "--no-cache-dir", "--disable-pip-version-check", "--retries", "0", "--timeout", "20",
+                              "-d", d, "--index-url", u.rstrip("/") + "/simple/", "remediate-emudhra-probe"],
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
         out = p.communicate()[0].decode("utf-8", "replace")
     except Exception:
         return "error"
     finally:
         shutil.rmtree(d, ignore_errors=True)
-    if re.search(r"CERTIFICATE_VERIFY_FAILED|certificate verify failed|SSLCertVerificationError|SSLError", out):
+    # Only a certificate verification failure counts as rejected: a firewall that drops the connection
+    # also raises an SSLError (EOF), which says nothing about trust.
+    if re.search(r"CERTIFICATE_VERIFY_FAILED|certificate verify failed|SSLCertVerificationError", out):
         return "rejected"
-    if re.search(r"No matching distribution|Could not find a version", out):
+    # Trusted only when the server's HTTP response came back; pip prints "No matching distribution" for DNS
+    # and connection failures too.
+    if re.search(r'"GET /simple/[^/ ]+/ HTTP/1\.[01]" \d{3}', out):
         return "trusted"
     return "error"
 try:
@@ -215,7 +221,9 @@ try:
     elif "/uv/python/" in label:
         emit("INFO", "pip %s in a uv-managed Python; uv and its virtualenvs don't use it. Optional: uv python upgrade" % pv)
     else:
-        live = [pip_probe(u) for u in (control, bad1, bad2)] if net == "1" else []
+        live = [pip_probe(control)] if net == "1" else []
+        if live == ["trusted"]:
+            live += [pip_probe(bad1), pip_probe(bad2)]
         if live == ["trusted", "rejected", "rejected"]:
             emit("PASS", "pip %s rejects both test hosts (live test)" % pv)
         elif live[:1] == ["trusted"] and "trusted" in live[1:]:
@@ -328,8 +336,21 @@ if [ "$locks" -gt 0 ]; then
 else
   rm -f "$LOCKS"
 fi
-# Tools installed with pipx or uv tool live in their own virtualenvs, each with its own pip and certifi.
-for tv in "$HOME"/.local/pipx/venvs/* "$HOME"/.local/share/pipx/venvs/* "$HOME"/.local/share/uv/tools/*; do
+# Tools installed with pipx or uv tool live in their own virtualenvs, each with its own certifi. pipx keeps
+# one shared pip for all of them. Ask the tools where they keep them, then try the usual defaults.
+tool_roots="$({
+  if command -v pipx > /dev/null; then pipx environment --value PIPX_LOCAL_VENVS 2> /dev/null; fi
+  if command -v uv > /dev/null; then uv tool dir 2> /dev/null; fi
+  printf '%s\n' "$HOME/.local/share/pipx/venvs" "$HOME/Library/Application Support/pipx/venvs" "$HOME/.local/pipx/venvs" "$HOME/.local/share/uv/tools"
+} | awk 'NF && !seen[$0]++')"
+pipx_shared="$({
+  if command -v pipx > /dev/null; then pipx environment --value PIPX_SHARED_LIBS 2> /dev/null; fi
+  printf '%s\n' "$HOME/.local/share/pipx/shared" "$HOME/Library/Application Support/pipx/shared" "$HOME/.local/pipx/shared"
+} | awk 'NF && !seen[$0]++')"
+printf '%s\n' "$tool_roots" | while IFS= read -r root; do
+  [ -d "$root" ] || continue
+  for tv in "$root"/*; do printf '%s\n' "$tv"; done
+done | while IFS= read -r tv; do
   [ -x "$tv/bin/python" ] || continue
   for di in "$tv"/lib/python*/site-packages/certifi-*.dist-info "$tv"/lib/python*/site-packages/pip-*.dist-info; do
     [ -d "$di" ] || continue
@@ -337,6 +358,15 @@ for tv in "$HOME"/.local/pipx/venvs/* "$HOME"/.local/share/pipx/venvs/* "$HOME"/
     pkg="${n%%-*}" v="${n#*-}"
     case "$pkg" in certifi) need=2026.10.19 ;; *) need=26.2.2 ;; esac
     if ! rem_ver_ge "$v" "$need"; then emit FAIL python "$tv/bin/python" "tool environment: $pkg $v (fixed: $need; fix with fix-python-env.sh on this python)"; fi
+  done
+done
+printf '%s\n' "$pipx_shared" | while IFS= read -r sh; do
+  [ -x "$sh/bin/python" ] || continue
+  for di in "$sh"/lib/python*/site-packages/pip-*.dist-info; do
+    [ -d "$di" ] || continue
+    v="$(basename "$di" .dist-info)"
+    v="${v#pip-}"
+    if ! rem_ver_ge "$v" 26.2.2; then emit FAIL python "$sh/bin/python" "pipx's shared pip $v, used by every pipx tool (fixed: 26.2.2; fix with fix-python-env.sh on this python)"; fi
   done
 done
 
@@ -456,7 +486,8 @@ elif command -v firefox > /dev/null; then
 fi
 if [ -n "$ff" ]; then
   case "$ff" in 153.* | 115.*) case "$ff" in 153.*) need=153.5.1 ;; *) need=115.43.1 ;; esac ;; *) need=158.0.1 ;; esac
-  tool_ver browser Firefox "$need" "$ff"
+  # OneCRL protects Firefox without an update, so an older version is a WARN, not a FAIL.
+  if rem_ver_ge "$ff" "$need"; then emit PASS browser Firefox "Firefox $ff"; else emit WARN browser Firefox "Firefox $ff: OneCRL blocks the chains without an update, but $need or later is the fixed release"; fi
 fi
 if command -v brew > /dev/null; then
   BREW_PREFIX="$(brew --prefix)"

@@ -46,7 +46,7 @@ tools/lint.sh --since origin/main  # also the version-bump rule, as CI runs it o
 bash skills/remediate-emudhra-on-my-machine/scripts/check.sh   # read-only
 ```
 
-Formatting follows `.editorconfig` (shfmt reads its `[*.sh]` section), Markdown follows `.markdownlint-cli2.jsonc`, and PowerShell follows `PSScriptAnalyzerSettings.psd1`. `tools/lint.sh` skips tools you don't have installed; CI runs all of them, plus PSScriptAnalyzer. The validator needs PyYAML.
+Tool versions are pinned in `.github/workflows/ci.yml` and `tools/lint.sh`: shfmt and actionlint by version and SHA-256, PSScriptAnalyzer, markdownlint-cli2, and skills-ref by version. Dependabot updates only the GitHub Actions, so bump the others by hand. Formatting follows `.editorconfig` (shfmt reads its `[*.sh]` section), Markdown follows `.markdownlint-cli2.jsonc`, and PowerShell follows `PSScriptAnalyzerSettings.psd1`. `tools/lint.sh` skips tools you don't have installed; CI runs all of them, plus PSScriptAnalyzer. The validator needs PyYAML.
 
 `main` is protected: changes land through a pull request whose CI passes. CI runs these checks, plus the check on macOS, Ubuntu, and Windows. It also runs the Linux admin script end to end in Debian, Ubuntu, Fedora, Rocky, and Arch containers, and does a test install with `npx skills add`.
 

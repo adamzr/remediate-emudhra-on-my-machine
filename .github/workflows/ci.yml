@@ -58,7 +58,7 @@ jobs:
         run: npx --yes markdownlint-cli2@0.24.0
       - name: bash syntax
         run: for f in "$SKILL"/scripts/*.sh tools/*.sh; do bash -n "$f"; done
-      - name: PowerShell parse and PSScriptAnalyzer (errors)
+      - name: PowerShell parse and PSScriptAnalyzer (warnings)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'

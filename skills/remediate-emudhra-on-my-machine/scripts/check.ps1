@@ -43,8 +43,8 @@ Emit INFO os untrusted-store "$((16 - $missing)) of 16 compromised intermediates
 $au = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\SystemCertificates\AuthRoot\AutoUpdate' -ErrorAction SilentlyContinue
 if ($au -and $au.DisallowedCertLastSyncTime -is [byte[]] -and $au.DisallowedCertLastSyncTime.Length -ge 8) {
     $sync = [DateTime]::FromFileTimeUtc([BitConverter]::ToInt64($au.DisallowedCertLastSyncTime, 0))
-    if ($sync -ge [DateTime]::new(2026, 10, 20, 0, 0, 0, [DateTimeKind]::Utc)) { Emit PASS os untrusted-list "Windows synced its untrusted-certificate list on $($sync.ToString('yyyy-MM-dd')) UTC, after Microsoft's block shipped" }
-    else { Emit WARN os untrusted-list "Windows last synced its untrusted-certificate list on $($sync.ToString('yyyy-MM-dd')) UTC, before Microsoft's block shipped on 2026-10-20; the admin script adds the block locally" }
+    if ($sync -ge [DateTime]::new(2026, 10, 21, 0, 0, 0, [DateTimeKind]::Utc)) { Emit PASS os untrusted-list "Windows synced its untrusted-certificate list on $($sync.ToString('yyyy-MM-dd')) UTC, after Microsoft's block shipped" }
+    else { Emit WARN os untrusted-list "Windows last synced its untrusted-certificate list on $($sync.ToString('yyyy-MM-dd')) UTC, before Microsoft's block had reached all machines (2026-10-21); the admin script adds the block locally" }
 }
 if ($net) {
     foreach ($u in @($RemBadEmsign, $RemBadAaa)) {
@@ -121,18 +121,24 @@ def pip_probe(u):
     import subprocess, tempfile, shutil
     d = tempfile.mkdtemp()
     try:
-        p = subprocess.Popen([sys.executable, "-B", "-m", "pip", "download", "--no-deps", "--no-cache-dir",
-                              "--disable-pip-version-check", "--retries", "0", "--timeout", "20", "-d", d,
-                              "--index-url", u.rstrip("/") + "/simple/", "remediate-emudhra-probe"],
-                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        env = dict(os.environ, PIP_REQUIRE_VIRTUALENV="0")
+        # -vv makes pip log urllib3's request lines, which show whether an HTTP response really came back.
+        p = subprocess.Popen([sys.executable, "-B", "-m", "pip", "download", "-vv", "--no-input", "--no-deps",
+                              "--no-cache-dir", "--disable-pip-version-check", "--retries", "0", "--timeout", "20",
+                              "-d", d, "--index-url", u.rstrip("/") + "/simple/", "remediate-emudhra-probe"],
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
         out = p.communicate()[0].decode("utf-8", "replace")
     except Exception:
         return "error"
     finally:
         shutil.rmtree(d, ignore_errors=True)
-    if re.search(r"CERTIFICATE_VERIFY_FAILED|certificate verify failed|SSLCertVerificationError|SSLError", out):
+    # Only a certificate verification failure counts as rejected: a firewall that drops the connection
+    # also raises an SSLError (EOF), which says nothing about trust.
+    if re.search(r"CERTIFICATE_VERIFY_FAILED|certificate verify failed|SSLCertVerificationError", out):
         return "rejected"
-    if re.search(r"No matching distribution|Could not find a version", out):
+    # Trusted only when the server's HTTP response came back; pip prints "No matching distribution" for DNS
+    # and connection failures too.
+    if re.search(r'"GET /simple/[^/ ]+/ HTTP/1\.[01]" \d{3}', out):
         return "trusted"
     return "error"
 try:
@@ -141,7 +147,9 @@ try:
     if vt(pv) >= FIX_PIP:
         emit("PASS", "pip %s" % pv)
     else:
-        live = [pip_probe(u) for u in (control, bad1, bad2)] if net == "1" else []
+        live = [pip_probe(control)] if net == "1" else []
+        if live == ["trusted"]:
+            live += [pip_probe(bad1), pip_probe(bad2)]
         if live == ["trusted", "rejected", "rejected"]:
             emit("PASS", "pip %s rejects both test hosts (live test)" % pv)
         elif live[:1] == ["trusted"] and "trusted" in live[1:]:
@@ -236,8 +244,28 @@ else {
         Emit WARN lockfile uv.lock "$($locks.Count) repositories under $where pin certifi older than 2026.10.19, so uv sync reverts their virtualenv fix until the pin is bumped. List: $lockList (fix-recipes: lock files)"
     }
 }
-# Tools installed with pipx or uv tool live in their own virtualenvs, each with its own pip and certifi.
-foreach ($root in @("$env:USERPROFILE\pipx\venvs", "$env:USERPROFILE\.local\pipx\venvs", "$env:APPDATA\uv\tools")) {
+# Tools installed with pipx or uv tool live in their own virtualenvs, each with its own certifi. pipx keeps one shared
+# pip for all of them. Ask the tools where they keep them, then try the usual defaults.
+$toolRoots = New-Object System.Collections.Generic.List[string]
+$sharedRoots = New-Object System.Collections.Generic.List[string]
+$pipx = Get-Command pipx -ErrorAction SilentlyContinue
+if ($pipx) {
+    @(Invoke-RemNative $pipx.Source @('environment', '--value', 'PIPX_LOCAL_VENVS')) | Where-Object { $_ } | ForEach-Object { $toolRoots.Add($_.Trim()) }
+    @(Invoke-RemNative $pipx.Source @('environment', '--value', 'PIPX_SHARED_LIBS')) | Where-Object { $_ } | ForEach-Object { $sharedRoots.Add($_.Trim()) }
+}
+$uvCmd = Get-Command uv.exe -ErrorAction SilentlyContinue
+if ($uvCmd) { @(Invoke-RemNative $uvCmd.Source @('tool', 'dir')) | Where-Object { $_ } | ForEach-Object { $toolRoots.Add($_.Trim()) } }
+foreach ($d in @("$env:LOCALAPPDATA\pipx\pipx\venvs", "$env:USERPROFILE\pipx\venvs", "$env:USERPROFILE\.local\pipx\venvs", "$env:APPDATA\uv\data\tools")) { $toolRoots.Add($d) }
+foreach ($d in @("$env:LOCALAPPDATA\pipx\pipx\shared", "$env:USERPROFILE\pipx\shared", "$env:USERPROFILE\.local\pipx\shared")) { $sharedRoots.Add($d) }
+foreach ($sh in ($sharedRoots | Sort-Object -Unique)) {
+    $spy = Join-Path $sh 'Scripts\python.exe'; if (-not (Test-Path $spy)) { continue }
+    foreach ($di in Get-ChildItem (Join-Path $sh 'Lib\site-packages') -Directory -ErrorAction SilentlyContinue) {
+        if ($di.Name -notmatch '^pip-([\d.]+)\.dist-info$') { continue }
+        $sv = $Matches[1]; $old = $false; try { $old = [version]$sv -lt [version]'26.2.2' } catch { $null = $_ }  # deliberately ignored
+        if ($old) { Emit FAIL python $spy "pipx's shared pip $sv, used by every pipx tool (fixed: 26.2.2; fix with fix-python-env.ps1 on this python)" }
+    }
+}
+foreach ($root in ($toolRoots | Sort-Object -Unique)) {
     if (-not (Test-Path $root)) { continue }
     foreach ($tv in Get-ChildItem $root -Directory -ErrorAction SilentlyContinue) {
         $tpy = Join-Path $tv.FullName 'Scripts\python.exe'; if (-not (Test-Path $tpy)) { continue }
@@ -312,7 +340,8 @@ if ($ff) {
     $fv = ($ff.CurrentVersion -split ' ')[0]; $fvv = $fv -replace '[^0-9.].*$', ''
     $need = if ($fvv -like '153.*') { '153.5.1' } elseif ($fvv -like '115.*') { '115.43.1' } else { '158.0.1' }
     $ok = $false; try { $ok = [version]$fvv -ge [version]$need } catch { $null = $_ }  # deliberately ignored
-    if ($ok) { Emit PASS browser Firefox "Firefox $fv" } else { Emit FAIL browser Firefox "Firefox $fv (fixed: $need); update it from Help > About Firefox" }
+    # OneCRL protects Firefox without an update, so an older version is a WARN, not a FAIL.
+    if ($ok) { Emit PASS browser Firefox "Firefox $fv" } else { Emit WARN browser Firefox "Firefox ${fv}: OneCRL blocks the chains without an update, but $need or later is the fixed release; update it from Help > About Firefox" }
 }
 Emit INFO browsers manual "Open $RemBadEmsign, $RemBadAaa, $RemBadEmsignNoCt, and $RemBadAaaNoCt in every browser; each must show a certificate error"
 Emit INFO apps manual 'Update Electron apps (Slack 4.52.182 or later, Zoom, VS Code, 1Password, Claude Desktop) and Docker Desktop (4.96.3 or later; Docker ships its fix in batches, so install each patch release)'

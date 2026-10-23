@@ -225,11 +225,15 @@ elif trusts_bad_chain; then
         -e 's|^mozilla/Comodo_AAA_Services_root.crt|!&|' \
         "$conf"
       sudo update-ca-certificates
-      if [ -n "$javasync" ]; then
-        sudo touch /var/lib/ca-certificates-java/fresh && sudo dpkg-reconfigure ca-certificates-java > /dev/null
-        echo "   rebuilt the Java certificate store (ca-certificates-java)"
-      fi
+      # Log first, so the undo is recorded even if the Java store rebuild below fails.
       rem_log "$SRC" "distrusted 2 roots in $conf" "backup $bak" "$undo"
+      if [ -n "$javasync" ]; then
+        if sudo touch /var/lib/ca-certificates-java/fresh && sudo dpkg-reconfigure ca-certificates-java > /dev/null; then
+          echo "   rebuilt the Java certificate store (ca-certificates-java)"
+        else
+          echo "   WARNING: rebuilding the Java certificate store failed; run: $javasync"
+        fi
+      fi
       echo "   distrusted; backup at $bak"
       ;;
     fedora)

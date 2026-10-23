@@ -51,7 +51,7 @@ From <https://emudhra.we-have-a-problem.com/> and the vendors' own advisories, a
 | Java | 27.0.1.0.2, 25.0.5.0.2, 21.0.13.0.2, 17.0.21.0.2, 11.0.33.0.2, or 8u511 (Oracle and OpenJDK), and Azul's fixed builds. See Java below for which vendors have shipped |
 | CPython | 3.15.1, 3.14.9, or 3.13.17 (they only update the pip that ships with Python; the check warns on older releases of those lines) |
 | Electron | 45.0.0, 44.9.1, 43.8.1, or 42.11.16 (apps update themselves; Slack 4.52.182 ships 44.9.1) |
-| Firefox | 158.0.1, or ESR 153.5.1 or 115.43.1 (Android 158.0.2) |
+| Firefox | 158.0.1, or ESR 153.5.1 or 115.43.1 (Android 158.0.2). OneCRL protects older versions without an update, so the check WARNs instead of FAILing |
 | Docker Desktop | 4.96.3 (Docker ships its fix in batches; install each patch release) |
 | Claude Code | 2.1.303 |
 | cloudflared | 2026.10.2 (Cloudflare WARP: 2026.8.2115.0) |
@@ -119,7 +119,7 @@ bash -c '. "$1/scripts/lib.sh"; rem_project_dirs | while read -r p; do find "$p"
 
 Only virtualenvs whose `certifi-*.dist-info` is older than 2026.10.19 need the fix. Show the full list, then ask once to run the fix script on exactly those, as one action. The interpreter is `<venv>/bin/python` on macOS and Linux and `<venv>\Scripts\python.exe` on Windows (pass that to `fix-python-env.ps1 -Python`). Skip virtualenvs the user does not recognize or that belong to a repository they don't work on. If the repository's `uv.lock` pins an old certifi, the next `uv sync` puts it back; see [Lock files](#lock-files).
 
-**Tool environments** (`pipx` and `uv tool`): each installed tool has its own virtualenv with its own pip and certifi, under `~/.local/pipx/venvs/`, `~/.local/share/pipx/venvs/`, or `~/.local/share/uv/tools/` (Windows: `%USERPROFILE%\pipx\venvs\`, `%APPDATA%\uv\tools\`). The check lists the vulnerable ones as `tool environment` FAILs; fix each with the fix script on that environment's python (`<venv>/bin/python`, or `<venv>\Scripts\python.exe`). `uv tool upgrade <tool>` or `pipx upgrade <tool>` upgrade only the tool, not necessarily certifi. Old `virtualenv` releases (before 21.14.12) also put the vulnerable pip into new environments; upgrade virtualenv itself if the user creates environments with it.
+**Tool environments** (`pipx` and `uv tool`): each installed tool has its own virtualenv with its own pip and certifi, wherever `pipx environment --value PIPX_LOCAL_VENVS` and `uv tool dir` say (defaults: `~/.local/share/pipx/venvs/` on Linux, `~/Library/Application Support/pipx/venvs/` on macOS, `%LOCALAPPDATA%\pipx\pipx\venvs\` on Windows; uv: `~/.local/share/uv/tools/`, or `%APPDATA%\uv\data\tools\`). pipx tool environments have no pip of their own: they share one in pipx's `shared` folder, which the check reports as `pipx's shared pip`. The check lists the vulnerable ones as `tool environment` FAILs; fix each with the fix script on that environment's python (`<venv>/bin/python`, or `<venv>\Scripts\python.exe`). `uv tool upgrade <tool>` or `pipx upgrade <tool>` upgrade only the tool, not necessarily certifi. Old `virtualenv` releases (before 21.14.12) also put the vulnerable pip into new environments; upgrade virtualenv itself if the user creates environments with it.
 
 **Why pip is tested live:** pip trusts its own bundled certificates in addition to `PIP_CERT`, `--cert`, and the system store, so a pip older than 26.2.2 can trust the compromised chains even on a machine whose system store is fixed. The check therefore tests each such pip against the test hosts. Apple's `/usr/bin/python3` pip passes once the macOS admin script has run.
 
@@ -180,6 +180,8 @@ Undo: `git config --global http.sslBackend <old>`, or `git config --global --uns
 | Deno | `deno upgrade` | `deno upgrade --version <old>` |
 | Homebrew CA bundle | [Homebrew upgrades](#homebrew-upgrades) with `ca-certificates` | Old keg kept; relink it |
 | Homebrew certifi | [Homebrew upgrades](#homebrew-upgrades) with `certifi` | Old keg kept; relink it |
+| cloudflared | `brew upgrade cloudflared` per [Homebrew upgrades](#homebrew-upgrades), the OS package manager, or Cloudflare's installer (the user runs it) | Reinstall the old version |
+| MacPorts curl-ca-bundle | `sudo port selfupdate && sudo port upgrade curl-ca-bundle` (the user runs it; it needs their password) | `sudo port activate curl-ca-bundle @<old>` |
 
 ## Java
 

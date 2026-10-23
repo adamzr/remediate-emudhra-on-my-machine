@@ -49,9 +49,20 @@ if ($conda) {
     # comes from conda's ca-certificates package, not from certifi. Each environment has its own copy.
     $caRec = @($meta | Where-Object { $_ -match '^ca-certificates-(\d[\d.]*)-' } | Select-Object -First 1)
     if ($caRec -and $caRec[0] -match '^ca-certificates-(\d[\d.]*)-') {
-        $cav = $Matches[1]; $caFixed = '2026.10.20'
-        if (Test-FromForge 'ca-certificates') { $caFixed = '2026.10.19'; $condaChannel = '-c conda-forge ' }
-        if (Test-Old $cav $caFixed) { $condaPkgs += "`"ca-certificates>=$caFixed`"" }
+        $cav = $Matches[1]; $caFixed = '2026.10.20'; $caForge = Test-FromForge 'ca-certificates'
+        if ($caForge) { $caFixed = '2026.10.19' }
+        if (Test-Old $cav $caFixed) {
+            # Anaconda's defaults channel has no fixed build for its retired platforms (the record's subdir is the environment's).
+            $subdir = ''
+            $recFile = Join-Path $metaDir $caRec[0]
+            if ((Get-Content $recFile -Raw) -match '"subdir":\s*"([^"]+)"') { $subdir = $Matches[1] }
+            if (-not $caForge -and $subdir -in @('osx-64', 'linux-ppc64le', 'linux-s390x')) {
+                $openMsgs += "conda's ca-certificates $cav in $prefix is vulnerable, and Anaconda's defaults channel has no fixed build for $subdir. Move this environment to conda-forge, or retire it."
+            } else {
+                $condaPkgs += "`"ca-certificates>=$caFixed`""
+                if ($caForge) { $condaChannel = '-c conda-forge ' }
+            }
+        }
     }
     if ($oldPip -and (Test-CondaOwned 'pip' $pipInst)) {
         $skipPip = $true
@@ -90,7 +101,10 @@ function Complete-Run($code) {
 
 if (-not $oldPip) {
     # conda environments can lack pip too; a conda-owned certifi there is conda's to upgrade.
-    if ($skipCertifi) { Complete-Run 0 }
+    if ($skipCertifi) {
+        if ($condaPkgs.Count -eq 0 -and $openMsgs.Count -eq 0) { Write-Host "certifi $oldCertifi in $Python is fixed, and conda manages it. Nothing to do." }
+        Complete-Run 0
+    }
     if (-not $oldCertifi) { Write-Host "Nothing for pip or uv to upgrade in $Python (no pip, no certifi)."; Complete-Run 0 }
     if (-not (Test-Old $oldCertifi '2026.10.19')) { Write-Host "certifi $oldCertifi is already fixed."; Complete-Run 0 }
     $uv = Get-Command uv.exe -ErrorAction SilentlyContinue
@@ -105,10 +119,11 @@ if (-not $oldPip) {
 }
 
 $pkgs = @()
-if (-not $skipPip) {
+# Only what is still old: reinstalling a fixed package would log a no-op change.
+if (-not $skipPip -and (Test-Old $oldPip '26.2.2')) {
     if ($py310) { $pkgs += 'pip>=26.2.2' } else { Write-Host "NOTE: Python $pyver cannot run the fixed pip (needs 3.10+). Upgrading certifi only." }
 }
-if ($oldCertifi -and -not $skipCertifi) { $pkgs += 'certifi>=2026.10.19' }
+if ($oldCertifi -and -not $skipCertifi -and (Test-Old $oldCertifi '2026.10.19')) { $pkgs += 'certifi>=2026.10.19' }
 # A pip that is vulnerable and cannot be fixed (the fixed pip needs Python 3.10+) stays open.
 if (-not $py310 -and $oldPip -and (Test-Old $oldPip '26.2.2')) {
     $openMsgs += "pip $oldPip in $Python stays vulnerable: the fixed pip needs Python 3.10 or later (this is $pyver). Retire this environment, or rebuild it on Python 3.10 or later."

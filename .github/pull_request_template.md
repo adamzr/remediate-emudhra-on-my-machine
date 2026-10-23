@@ -8,7 +8,7 @@
 
 ## Checklist
 
-- [ ] `shellcheck -x -S warning` and `python3 tools/validate_skill.py` pass
+- [ ] `tools/lint.sh --since origin/main` passes (CI also runs PSScriptAnalyzer)
 - [ ] Scripts still run on macOS bash 3.2 and Windows PowerShell 5.1
 - [ ] Every change a script makes is backed up and logged with an undo command
 - [ ] `metadata.version` in SKILL.md is bumped and CHANGELOG.md has an entry

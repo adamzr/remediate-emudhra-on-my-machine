@@ -87,16 +87,24 @@ if [ -n "$conda" ]; then
   cav="$({ ls "$prefix"/conda-meta/ca-certificates-[0-9]*.json 2> /dev/null || true; } | head -1 | sed -E 's#.*/ca-certificates-([0-9][0-9.]*)-.*#\1#')"
   if [ -n "$cav" ]; then
     ca_fixed=2026.10.20
+    ca_forge=0
     if from_forge ca-certificates; then
       ca_fixed=2026.10.19
-      conda_channel="-c conda-forge "
+      ca_forge=1
     fi
     if ! rem_ver_ge "$cav" "$ca_fixed"; then
-      if [ "$ca_fixed" = 2026.10.20 ] && [ "$(uname -s)-$(uname -m)" = Darwin-x86_64 ]; then
-        add_open "conda's ca-certificates $cav in $prefix is vulnerable, and Anaconda's defaults channel has no fixed build for Intel Macs (osx-64). Move this environment to conda-forge, or retire it."
-      else
-        conda_pkgs="'ca-certificates>=$ca_fixed'"
-      fi
+      # Anaconda's defaults channel has no fixed build for its retired platforms. The record's subdir is the
+      # environment's own platform, which uname gets wrong for an osx-64 conda running under Rosetta.
+      subdir="$(sed -n 's/.*"subdir": *"\([^"]*\)".*/\1/p' "$prefix"/conda-meta/ca-certificates-"$cav"-*.json 2> /dev/null | head -1)"
+      case "$ca_forge:$subdir" in
+        0:osx-64 | 0:linux-ppc64le | 0:linux-s390x)
+          add_open "conda's ca-certificates $cav in $prefix is vulnerable, and Anaconda's defaults channel has no fixed build for $subdir. Move this environment to conda-forge, or retire it."
+          ;;
+        *)
+          conda_pkgs="'ca-certificates>=$ca_fixed'"
+          if [ "$ca_forge" = 1 ]; then conda_channel="-c conda-forge "; fi
+          ;;
+      esac
     fi
   fi
   if [ -n "$old_pip" ] && conda_owned pip "$pip_inst"; then
@@ -172,7 +180,10 @@ fi
 
 if [ -z "$old_pip" ]; then
   # conda environments can lack pip too; a conda-owned certifi there is conda's to upgrade.
-  if [ "$skip_certifi" = 1 ]; then finish 0; fi
+  if [ "$skip_certifi" = 1 ]; then
+    if [ -z "$conda_pkgs$open_msgs" ]; then echo "certifi $old_certifi in $PY is fixed, and conda manages it. Nothing to do."; fi
+    finish 0
+  fi
   # Virtualenvs created by uv have no pip. Upgrade certifi with uv instead.
   if [ -z "$old_certifi" ]; then
     echo "Nothing for pip or uv to upgrade in $PY (no pip, no certifi)."
@@ -199,12 +210,13 @@ if [ -z "$old_pip" ]; then
 fi
 
 pkgs=""
-if [ "$skip_pip" = 0 ]; then
+# Only what is still old: reinstalling a fixed package would log a no-op change.
+if [ "$skip_pip" = 0 ] && ! rem_ver_ge "$old_pip" 26.2.2; then
   if [ "$py310" = 1 ]; then
     pkgs="pip>=26.2.2"
   else echo "NOTE: Python $pyver cannot run the fixed pip (needs 3.10+). Upgrading certifi only."; fi
 fi
-if [ -n "$old_certifi" ] && [ "$skip_certifi" = 0 ]; then pkgs="${pkgs:+$pkgs }certifi>=2026.10.19"; fi
+if [ -n "$old_certifi" ] && [ "$skip_certifi" = 0 ] && ! rem_ver_ge "$old_certifi" 2026.10.19; then pkgs="${pkgs:+$pkgs }certifi>=2026.10.19"; fi
 # A pip that is vulnerable and cannot be fixed (the fixed pip needs Python 3.10+) stays open.
 if [ "$py310" = 0 ] && [ -n "$old_pip" ] && ! rem_ver_ge "$old_pip" 26.2.2; then
   add_open "pip $old_pip in $PY stays vulnerable: the fixed pip needs Python 3.10 or later (this is $pyver). Retire this environment, or rebuild it on Python 3.10 or later."
