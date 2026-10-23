@@ -28,7 +28,7 @@ Before running a recipe, record what it replaces (the old version or old setting
 
 ## Fixed versions
 
-Developer tools are from https://emudhra.we-have-a-problem.com/ as of October 22, 2026; the site keeps adding fixed releases, so check it when a tool is not listed here. Operating systems are noted separately below the table.
+Developer tools are from <https://emudhra.we-have-a-problem.com/> as of October 22, 2026; the site keeps adding fixed releases, so check it when a tool is not listed here. Operating systems are noted separately below the table.
 
 | Component | Minimum fixed version |
 |---|---|
@@ -80,6 +80,7 @@ It logs its own undo. It also handles uv-created virtualenvs, which have no pip,
 **Homebrew Python:** follow [Homebrew upgrades](#homebrew-upgrades) with the formulae `fix-python-env.sh` prints. pip comes with `python@3.X`. If another formula (such as `oci-cli` or `semgrep`) installed Homebrew's `certifi` formula, Homebrew's Pythons import that one, and upgrading `python@3.X` does not upgrade it; the check reports it as `homebrew|certifi`.
 
 **conda environments** (base and named, including mamba and micromamba): run the vetted fix script on the environment's python, like any other interpreter. It upgrades each package with whatever installed the copy Python actually imports, read from that package's `INSTALLER` file (a `conda-meta/` record alone can be stale after pip replaced the package):
+
 - **Installed by pip** (common in older environments): upgraded with the environment's own pip, and logged with an undo.
 - **Installed by conda:** left alone. The script prints `conda install -p <env prefix> 'certifi>=2026.10.19' 'python=<X.Y>'` (plus `'pip>=26.2.2'` when needed) and exits 3. The Python pin keeps conda from upgrading the interpreter to satisfy the request, and a conda-forge environment also gets `-c conda-forge`; offer that as a vetted recipe. It uses `conda install` with a minimum version because that fails loudly if the channel can't provide it, while `conda update` can report success and change nothing. Undo: `conda install -p <env prefix> certifi=<old>`, adding `pip=<old>` if pip was upgraded.
 - **conda-owned certifi on an older Python:** conda's builds of the fixed certifi need Python 3.10 or later on the defaults channel and 3.11 or later on conda-forge (the default for miniforge, mambaforge, and micromamba), so conda cannot install it below that. The script exits 4. Record the environment as open, and suggest retiring it or rebuilding it on Python 3.10 or later.
@@ -124,7 +125,7 @@ Install the fixed release on the same line (22, 24, or 26), make it the default,
 | fnm | `fnm install 24.22.1 && fnm default 24.22.1` | `fnm default <old>` |
 | Volta | `volta install node@24.22.1` | `volta install node@<old>` |
 | Homebrew | [Homebrew upgrades](#homebrew-upgrades) with `node` | Old keg kept; relink it |
-| Windows installer | Download the LTS installer from https://nodejs.org/ (the user runs it) | Reinstall the old version |
+| Windows installer | Download the LTS installer from <https://nodejs.org/> (the user runs it) | Reinstall the old version |
 
 To remove an old version later, ask separately: `nvm uninstall <old>`. Never remove a version a `.nvmrc` pins without the user's explicit agreement.
 
@@ -145,7 +146,7 @@ Undo: `git config --global http.sslBackend <old>`, or `git config --global --uns
 |---|---|---|
 | Go (Homebrew) | [Homebrew upgrades](#homebrew-upgrades) with `go` | Old keg kept; relink it |
 | Go (Windows) | `winget upgrade --id GoLang.Go` | Reinstall the old version |
-| Go (official installer) | Download from https://go.dev/dl/ (the user runs it) | Reinstall the old version |
+| Go (official installer) | Download from <https://go.dev/dl/> (the user runs it) | Reinstall the old version |
 | uv (standalone) | `uv self update` | `uv self update <old>` |
 | uv (Homebrew) | [Homebrew upgrades](#homebrew-upgrades) with `uv` | Old keg kept; relink it |
 | rustup | `rustup self update` | None needed |

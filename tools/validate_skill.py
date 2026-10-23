@@ -2,7 +2,8 @@
 """Validate the skill in skills/ against the Agent Skills spec and the authoring rules in CONTRIBUTING.md.
 
 Usage:
-    python3 tools/validate_skill.py
+    python3 tools/validate_skill.py                 # everything except the version-bump rule
+    python3 tools/validate_skill.py --since main    # also: a change under skills/ must bump the version
 
 Checks, for every skills/<name>/SKILL.md:
   - frontmatter is valid YAML with only the Agent Skills fields; `name` follows the naming rules and
@@ -12,13 +13,17 @@ Checks, for every skills/<name>/SKILL.md:
   - reference files over 100 lines start with a `## Contents` section, and never link on to a third file
   - every `scripts/...`, `references/...`, and `assets/...` path SKILL.md names exists
 And, for every Markdown file in the repository: no em-dashes or en-dashes, and no personal home paths.
+And versioning: the newest CHANGELOG.md entry is the skill's `metadata.version`, and with --since REF,
+any change under skills/ since REF raises that version (semver).
 
 Pure stdlib plus PyYAML. `npx skills-ref validate` runs in CI as a cross-check against spec drift.
 """
 
 from __future__ import annotations
 
+import argparse
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -142,13 +147,52 @@ def check_markdown() -> None:
                 fail(md, f"line {n} has a personal home-directory path")
 
 
+def skill_version(text: str) -> str | None:
+    match = re.match(r"^---\n(.*?)\n---\n", text, re.S)
+    data = yaml.safe_load(match.group(1)) if match else None
+    meta = (data or {}).get("metadata") or {}
+    return meta.get("version") if isinstance(meta, dict) else None
+
+
+def semver(v: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in re.findall(r"\d+", v)[:3])
+
+
+def check_versions(skills: list[Path], since: str | None) -> None:
+    changelog = ROOT / "CHANGELOG.md"
+    top = re.search(r"^## (\d+\.\d+\.\d+)", changelog.read_text(), re.M) if changelog.is_file() else None
+    for skill_dir in skills:
+        skill_md = skill_dir / "SKILL.md"
+        now = skill_version(skill_md.read_text())
+        if not now:
+            fail(skill_md, "`metadata.version` is required")
+            continue
+        if not top or top.group(1) != now:
+            fail(changelog, f"the newest entry must be `## {now}` (the skill's metadata.version)")
+        if since is None:
+            continue
+        rel = skill_dir.relative_to(ROOT).as_posix()
+        changed = subprocess.run(["git", "diff", "--name-only", f"{since}...HEAD", "--", rel],
+                                 cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
+        if not changed:
+            continue
+        old = subprocess.run(["git", "show", f"{since}:{rel}/SKILL.md"], cwd=ROOT, capture_output=True, text=True)
+        before = skill_version(old.stdout) if old.returncode == 0 else None
+        if before and semver(now) <= semver(before):
+            fail(skill_md, f"files under {rel}/ changed since {since}, so `metadata.version` must rise above {before}")
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--since", help="git ref to compare against for the version-bump rule, e.g. origin/main")
+    args = parser.parse_args()
     skills = sorted(p.parent for p in (ROOT / "skills").glob("*/SKILL.md"))
     if not skills:
         failures.append("skills/: no skills/<name>/SKILL.md found")
     for skill_dir in skills:
         check_skill(skill_dir)
     check_markdown()
+    check_versions(skills, args.since)
     if failures:
         print("\n".join(f"FAIL {f}" for f in failures))
         return 1

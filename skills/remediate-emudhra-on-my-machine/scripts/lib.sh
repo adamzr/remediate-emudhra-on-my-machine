@@ -34,7 +34,10 @@ CB6E15165AC802E9B3F993F16C25D41F4E81C21EBDE71AE1B012AC00BF9C7C3F 7485B51C0ED1928
 # live test and blocked.certs decide.
 REM_JDK_FIXED="27.0.1.0.2, 25.0.5.0.2, 21.0.13.0.2, 17.0.21.0.2, 11.0.33.0.2, or 8u511"
 
-rem_init() { mkdir -p "$REM_BACKUP_DIR"; touch "$REM_LOG"; }
+rem_init() {
+  mkdir -p "$REM_BACKUP_DIR"
+  touch "$REM_LOG"
+}
 
 # rem_log SOURCE ACTION DETAIL UNDO
 # SOURCE is "vetted-script:<name>", "vetted-recipe", or "improvised". Undo entries are replayed newest first.
@@ -49,7 +52,7 @@ rem_q() { printf '%q ' "$@" | sed 's/ $//'; }
 # rem_owner_mode PATH -> "uid:gid mode" of an existing file (macOS and Linux).
 # GNU stat -c first: on Linux, "stat -f" means filesystem status and succeeds with the wrong output.
 rem_owner_mode() {
-  if stat -c '%u:%g %a' "$1" >/dev/null 2>&1; then stat -c '%u:%g %a' "$1"; else stat -f '%u:%g %Lp' "$1"; fi
+  if stat -c '%u:%g %a' "$1" > /dev/null 2>&1; then stat -c '%u:%g %a' "$1"; else stat -f '%u:%g %Lp' "$1"; fi
 }
 
 # rem_backup PATH [sudo] -> prints the backup path. A missing file is recorded as "<backup>.absent".
@@ -77,8 +80,14 @@ rem_backup() {
 # current owner and mode (never leaves a system file owned by the user).
 rem_restore_cmd() {
   local bak="$1" dest="$2" s="${3:+sudo }" om owner mode
-  case "$bak" in *.absent) printf '%srm -f %s' "$s" "$(rem_q "$dest")"; return ;; esac
-  om="$(rem_owner_mode "$dest")"; owner="${om% *}"; mode="${om#* }"
+  case "$bak" in *.absent)
+    printf '%srm -f %s' "$s" "$(rem_q "$dest")"
+    return
+    ;;
+  esac
+  om="$(rem_owner_mode "$dest")"
+  owner="${om% *}"
+  mode="${om#* }"
   printf '%scp %s %s && %schown %s %s && %schmod %s %s' "$s" "$(rem_q "$bak")" "$(rem_q "$dest")" \
     "$s" "$owner" "$(rem_q "$dest")" "$s" "$mode" "$(rem_q "$dest")"
 }
@@ -89,10 +98,12 @@ rem_ver_ge() {
   a=$(printf '%s' "$1" | sed -E 's/[^0-9.].*$//')
   b=$(printf '%s' "$2" | sed -E 's/[^0-9.].*$//')
   for i in 1 2 3 4; do
-    x=$(printf '%s' "$a" | cut -d. -f$i); y=$(printf '%s' "$b" | cut -d. -f$i)
-    x=${x:-0}; y=${y:-0}
-    [ "$x" -gt "$y" ] 2>/dev/null && return 0
-    [ "$x" -lt "$y" ] 2>/dev/null && return 1
+    x=$(printf '%s' "$a" | cut -d. -f$i)
+    y=$(printf '%s' "$b" | cut -d. -f$i)
+    x=${x:-0}
+    y=${y:-0}
+    [ "$x" -gt "$y" ] 2> /dev/null && return 0
+    [ "$x" -lt "$y" ] 2> /dev/null && return 1
   done
   return 0
 }
@@ -104,10 +115,10 @@ REM_DEFAULT_PROJECTS="$HOME/Development:$HOME/dev:$HOME/src:$HOME/code:$HOME/pro
 rem_project_dirs() {
   local sep=':' list d
   list="${REMEDIATE_EMUDHRA_PROJECTS:-}"
-  case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) [ -n "$list" ] && sep=';' ;; esac
+  case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) [ -n "$list" ] && sep=';' ;; esac
   [ -n "$list" ] || list="$REM_DEFAULT_PROJECTS"
   printf '%s\n' "$list" | tr "$sep" '\n' | while IFS= read -r d; do
-    if [ "$sep" = ';' ] && command -v cygpath >/dev/null; then d="$(cygpath -u "$d")"; fi
+    if [ "$sep" = ';' ] && command -v cygpath > /dev/null; then d="$(cygpath -u "$d")"; fi
     if [ -n "$d" ] && [ -d "$d" ]; then rem_realpath "$d"; fi
   done | awk '!seen[$0]++'
 }
@@ -118,10 +129,10 @@ rem_project_dirs() {
 rem_conda_pythons() {
   local root e
   for root in "$HOME"/miniconda3 "$HOME"/anaconda3 "$HOME"/miniforge3 "$HOME"/mambaforge "$HOME"/micromamba \
-              "$HOME"/opt/miniconda3 "$HOME"/opt/anaconda3 "$HOME"/.conda "$HOME"/.local/share/mamba \
-              /opt/conda /opt/miniconda3 /opt/anaconda3 /opt/miniforge3 \
-              /opt/homebrew/Caskroom/miniconda/base /opt/homebrew/Caskroom/miniforge/base \
-              /usr/local/Caskroom/miniconda/base /usr/local/Caskroom/miniforge/base; do
+    "$HOME"/opt/miniconda3 "$HOME"/opt/anaconda3 "$HOME"/.conda "$HOME"/.local/share/mamba \
+    /opt/conda /opt/miniconda3 /opt/anaconda3 /opt/miniforge3 \
+    /opt/homebrew/Caskroom/miniconda/base /opt/homebrew/Caskroom/miniforge/base \
+    /usr/local/Caskroom/miniconda/base /usr/local/Caskroom/miniforge/base; do
     [ -d "$root" ] || continue
     for e in "$root" "$root"/envs/*; do
       if [ -x "$e/bin/python" ]; then printf '%s\n' "$e/bin/python"; fi
@@ -134,13 +145,13 @@ rem_conda_pythons() {
   fi
 }
 
-rem_realpath() { readlink -f "$1" 2>/dev/null || printf '%s\n' "$1"; }
+rem_realpath() { readlink -f "$1" 2> /dev/null || printf '%s\n' "$1"; }
 
 # rem_mac_tool_ok PATH -> false for Apple's /usr/bin developer shims when Command Line Tools are not
 # installed (running them pops an "install developer tools" dialog).
 rem_mac_tool_ok() {
   [ "$(uname -s)" = Darwin ] || return 0
-  case "$1" in /usr/bin/git|/usr/bin/python3|/usr/bin/pip3) xcode-select -p >/dev/null 2>&1 ;; *) return 0 ;; esac
+  case "$1" in /usr/bin/git | /usr/bin/python3 | /usr/bin/pip3) xcode-select -p > /dev/null 2>&1 ;; *) return 0 ;; esac
 }
 
 # rem_jdk_homes -> one JDK home per line, deduplicated, for macOS and Linux.
@@ -152,8 +163,8 @@ rem_jdk_homes() {
       { /usr/libexec/java_home -V 2>&1 || true; } | sed -nE 's#^.*[[:space:]](/.*/Contents/Home)$#\1#p'
     fi
     for d in /Library/Java/JavaVirtualMachines/*/Contents/Home "$HOME"/Library/Java/JavaVirtualMachines/*/Contents/Home \
-             /opt/homebrew/opt/openjdk*/libexec/openjdk.jdk/Contents/Home /usr/local/opt/openjdk*/libexec/openjdk.jdk/Contents/Home \
-             "$HOME"/.sdkman/candidates/java/* /usr/lib/jvm/* "$HOME"/.jdks/*; do
+      /opt/homebrew/opt/openjdk*/libexec/openjdk.jdk/Contents/Home /usr/local/opt/openjdk*/libexec/openjdk.jdk/Contents/Home \
+      "$HOME"/.sdkman/candidates/java/* /usr/lib/jvm/* "$HOME"/.jdks/*; do
       if [ -d "$d" ] && [ ! -L "$d" ]; then printf '%s\n' "$d"; fi
     done
   } | while IFS= read -r h; do if [ -n "$h" ]; then rem_realpath "$h"; fi; done | awk '!seen[$0]++'
@@ -163,21 +174,24 @@ rem_jdk_homes() {
 rem_cacerts() {
   local f
   for f in "$1/lib/security/cacerts" "$1/jre/lib/security/cacerts"; do
-    [ -f "$f" ] && { rem_realpath "$f"; return 0; }
+    [ -f "$f" ] && {
+      rem_realpath "$f"
+      return 0
+    }
   done
   return 1
 }
 
 # rem_bad_aliases KEYTOOL CACERTS -> aliases (one per line, may contain spaces) of the two affected roots.
 rem_bad_aliases() {
-  "$1" -list -v -keystore "$2" -storepass changeit </dev/null 2>/dev/null |
+  "$1" -list -v -keystore "$2" -storepass changeit < /dev/null 2> /dev/null |
     awk -v bad="$REM_BAD_ROOT_FPS" '/^Alias name: /{a=substr($0, 13)} /SHA256:/{ if ($2 ~ "^(" bad ")$") print a }'
 }
 
 # rem_jdk_major HOME -> the JDK's feature version (8, 11, 17, ...) from its release file, or nothing.
 rem_jdk_major() {
   local v
-  v="$(sed -n 's/^JAVA_VERSION="\(.*\)"$/\1/p' "$1/release" 2>/dev/null | head -1)"
+  v="$(sed -n 's/^JAVA_VERSION="\(.*\)"$/\1/p' "$1/release" 2> /dev/null | head -1)"
   case "$v" in 1.*) v="${v#1.}" ;; esac
   printf '%s' "${v%%[._+-]*}"
 }
@@ -199,11 +213,12 @@ rem_jdk_blocked_count() {
 # rem_java_probe HOME URL... -> one line per URL: trusted, rejected, or error, from a live TLS connection
 # made by that JDK. Prints nothing when the JDK cannot run a single-file program (JDK 10 and older).
 rem_java_probe() {
-  local home="$1" major dir; shift
+  local home="$1" major dir
+  shift
   major="$(rem_jdk_major "$home")"
-  [ -n "$major" ] && [ "$major" -ge 11 ] 2>/dev/null && [ -x "$home/bin/java" ] || return 0
+  [ -n "$major" ] && [ "$major" -ge 11 ] 2> /dev/null && [ -x "$home/bin/java" ] || return 0
   dir="$(mktemp -d)"
-  cat > "$dir/RemProbe.java" <<'JAVA'
+  cat > "$dir/RemProbe.java" << 'JAVA'
 public class RemProbe {
     public static void main(String[] urls) {
         for (String u : urls) {
@@ -220,7 +235,7 @@ public class RemProbe {
     }
 }
 JAVA
-  "$home/bin/java" -Djava.net.useSystemProxies=true "$dir/RemProbe.java" "$@" 2>/dev/null </dev/null
+  "$home/bin/java" -Djava.net.useSystemProxies=true "$dir/RemProbe.java" "$@" 2> /dev/null < /dev/null
   rm -rf "$dir"
 }
 
@@ -229,20 +244,38 @@ JAVA
 # JDK, or a manual block) or when cacerts no longer has the two affected roots (the admin script's fix).
 rem_jdk_verdict() {
   local home="$1" net="$2" res c k bad v
-  v="$(sed -n 's/^JAVA_VERSION="\(.*\)"$/\1/p' "$home/release" 2>/dev/null | head -1)"
+  v="$(sed -n 's/^JAVA_VERSION="\(.*\)"$/\1/p' "$home/release" 2> /dev/null | head -1)"
   if [ "$net" = 1 ]; then
     res="$(rem_java_probe "$home" "$REM_CONTROL" "$REM_BAD_EMSIGN" "$REM_BAD_AAA" | tr '\n' ' ')"
     case "$res" in
-      "trusted rejected rejected ") printf 'pass|Java %s rejects both test hosts (live test)' "$v"; return ;;
-      "trusted "*trusted*) printf 'fail|Java %s TRUSTS a compromised chain (live test). Upgrade to %s (preferred), or run the admin script' "$v" "$REM_JDK_FIXED"; return ;;
+      "trusted rejected rejected ")
+        printf 'pass|Java %s rejects both test hosts (live test)' "$v"
+        return
+        ;;
+      "trusted "*trusted*)
+        printf 'fail|Java %s TRUSTS a compromised chain (live test). Upgrade to %s (preferred), or run the admin script' "$v" "$REM_JDK_FIXED"
+        return
+        ;;
     esac
   fi
-  if [ "$(rem_jdk_blocked_count "$home")" -ge 16 ]; then printf 'pass|Java %s blocks all 16 compromised intermediates in blocked.certs' "$v"; return; fi
-  c="$(rem_cacerts "$home")" || { printf 'pass|no cacerts file'; return; }
+  if [ "$(rem_jdk_blocked_count "$home")" -ge 16 ]; then
+    printf 'pass|Java %s blocks all 16 compromised intermediates in blocked.certs' "$v"
+    return
+  fi
+  c="$(rem_cacerts "$home")" || {
+    printf 'pass|no cacerts file'
+    return
+  }
   k="$home/bin/keytool"
-  [ -x "$k" ] || { printf 'fail|Java %s: no keytool to inspect cacerts, and no live test possible. Upgrade to %s' "$v" "$REM_JDK_FIXED"; return; }
+  [ -x "$k" ] || {
+    printf 'fail|Java %s: no keytool to inspect cacerts, and no live test possible. Upgrade to %s' "$v" "$REM_JDK_FIXED"
+    return
+  }
   bad="$(rem_bad_aliases "$k" "$c" | tr '\n' ',' | sed 's/,$//')"
-  if [ -z "$bad" ]; then printf 'pass|Java %s: affected roots absent from cacerts' "$v"; return; fi
+  if [ -z "$bad" ]; then
+    printf 'pass|Java %s: affected roots absent from cacerts' "$v"
+    return
+  fi
   printf 'fail|Java %s: cacerts still trusts %s. Upgrade to %s (preferred), or run the admin script' "$v" "$bad" "$REM_JDK_FIXED"
 }
 
@@ -251,14 +284,16 @@ rem_jdk_verdict() {
 rem_pem_bundle_has_bad_roots() {
   local f="$1" tmp
   [ -r "$f" ] || return 2
-  command -v openssl >/dev/null || return 2
+  command -v openssl > /dev/null || return 2
   tmp="$(mktemp -d)"
   awk -v d="$tmp" '/BEGIN CERTIFICATE/{n++} n{print > (d "/c" n ".pem")}' "$f"
   for c in "$tmp"/c*.pem; do
     [ -e "$c" ] || continue
-    if openssl x509 -in "$c" -noout -fingerprint -sha256 2>/dev/null | tr 'a-f' 'A-F' | grep -qE "=($REM_BAD_ROOT_FPS)$"; then
-      rm -rf "$tmp"; return 0
+    if openssl x509 -in "$c" -noout -fingerprint -sha256 2> /dev/null | tr 'a-f' 'A-F' | grep -qE "=($REM_BAD_ROOT_FPS)$"; then
+      rm -rf "$tmp"
+      return 0
     fi
   done
-  rm -rf "$tmp"; return 1
+  rm -rf "$tmp"
+  return 1
 }

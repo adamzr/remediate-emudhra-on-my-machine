@@ -1,0 +1,14 @@
+// markdownlint settings, used by CI and tools/lint.sh.
+{
+  "config": {
+    "default": true,
+    // Prose is wrapped by paragraph, not at a fixed width.
+    "MD013": false,
+    // Tables are kept compact.
+    "MD060": false,
+    // Templates such as the pull request template start with a second-level heading.
+    "MD041": false
+  },
+  "globs": ["**/*.md"],
+  "ignores": ["node_modules/**"]
+}

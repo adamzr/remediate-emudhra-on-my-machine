@@ -10,7 +10,7 @@ Security problems go through [SECURITY.md](SECURITY.md), not public issues.
 
 ## Layout
 
-```
+```text
 skills/remediate-emudhra-on-my-machine/
   SKILL.md        the workflow the agent follows
   references/     fix recipes and the admin-step walkthrough, loaded when needed
@@ -26,11 +26,12 @@ tools/validate_skill.py   repository checks, run in CI
 - **Admin scripts are run by the user, never by the agent.** They ask for `sudo` only where needed, refuse to run as root, and support `--dry-run`.
 - **Every change is backed up and logged with an exact undo command**, using `rem_backup`, `rem_restore_cmd`, and `rem_log` (`Backup-RemFile` and `Write-RemLog` on Windows).
 - **Never weaken security**, even temporarily: no disabling TLS verification, no `--break-system-packages`, no removing Windows root certificates, no killing processes by name.
-- **Follow the incident site.** Where https://emudhra.we-have-a-problem.com/ prescribes a fix, apply it exactly, and explain any deviation in the script's header comment.
+- **Follow the incident site.** Where <https://emudhra.we-have-a-problem.com/> prescribes a fix, apply it exactly, and explain any deviation in the script's header comment.
 
 ## Rules for the skill text
 
 The skill follows the [Agent Skills specification](https://agentskills.io/specification) and Anthropic's [skill authoring best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices).
+
 - `SKILL.md` stays under 500 lines. Put detail in `references/`, and say in `SKILL.md` when to read each file.
 - Reference files are one level deep, and files over 100 lines start with `## Contents`.
 - The `description` is at most 1,024 characters, in the third person, and says both what the skill does and when to use it. Don't put anything that looks like an XML tag in it.
@@ -39,13 +40,15 @@ The skill follows the [Agent Skills specification](https://agentskills.io/specif
 ## Checks to run before a pull request
 
 ```bash
-shellcheck -x -S warning skills/*/scripts/*.sh tools/*.sh
-python3 tools/validate_skill.py           # needs PyYAML
-npx --yes skills-ref@0.1.5 validate skills/remediate-emudhra-on-my-machine
+tools/lint.sh                    # shellcheck, shfmt, bash -n, markdownlint, actionlint, validation
+tools/lint.sh --fix              # rewrite shell formatting and fix what markdownlint can
+tools/lint.sh --since origin/main  # also the version-bump rule, as CI runs it on pull requests
 bash skills/remediate-emudhra-on-my-machine/scripts/check.sh   # read-only
 ```
 
-CI runs these as well, plus the check on macOS, Ubuntu, and Windows. It also runs the Linux admin script end to end in Debian, Ubuntu, Fedora, Rocky, and Arch containers, and does a test install with `npx skills add`.
+Formatting follows `.editorconfig` (shfmt reads its `[*.sh]` section), Markdown follows `.markdownlint-cli2.jsonc`, and PowerShell follows `PSScriptAnalyzerSettings.psd1`. `tools/lint.sh` skips tools you don't have installed; CI runs all of them, plus PSScriptAnalyzer. The validator needs PyYAML.
+
+`main` is protected: changes land through a pull request whose CI passes. CI runs these checks, plus the check on macOS, Ubuntu, and Windows. It also runs the Linux admin script end to end in Debian, Ubuntu, Fedora, Rocky, and Arch containers, and does a test install with `npx skills add`.
 
 Say in the pull request how you tested on a real machine. In the same pull request, bump `metadata.version` in `SKILL.md` ([semver](https://semver.org): patch for fixes, minor for new checks or platforms) and add a `CHANGELOG.md` entry.
 

@@ -20,16 +20,25 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
 SRC="vetted-script:admin-fix-macos.sh"
-DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
+DRY=0
+[ "${1:-}" = "--dry-run" ] && DRY=1
 CERTDIR="$HERE/../assets/compromised-intermediates"
 
-[ "$(uname -s)" = Darwin ] || { echo "This script is for macOS." >&2; exit 2; }
-[ "$(id -u)" -ne 0 ] || { echo "Run it as yourself, not with sudo; it asks for sudo only where needed." >&2; exit 2; }
+[ "$(uname -s)" = Darwin ] || {
+  echo "This script is for macOS." >&2
+  exit 2
+}
+[ "$(id -u)" -ne 0 ] || {
+  echo "Run it as yourself, not with sudo; it asks for sudo only where needed." >&2
+  exit 2
+}
 if [ "$DRY" = 0 ] && [ ! -t 0 ]; then
-  echo "Run this in a real terminal window (Terminal or iTerm2) so sudo can ask for your password." >&2; exit 2
+  echo "Run this in a real terminal window (Terminal or iTerm2) so sudo can ask for your password." >&2
+  exit 2
 fi
 rem_init
-WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
 [ "$DRY" = 1 ] && echo "DRY RUN: nothing will be changed."
 
 echo "== 1. /etc/ssl/cert.pem"
@@ -41,7 +50,8 @@ if grep -qE "^=== .*/CN=($REM_BAD_ROOT_CNS)\$" /etc/ssl/cert.pem; then
   awk '/^(###|===) /{skip=0}
     /^=== .*\/CN=(AAA Certificate Services|emSign ECC Root CA - G3)$/{skip=1}
     !skip' /etc/ssl/cert.pem > "$WORK/cert.pem"
-  before="$(grep -c 'BEGIN CERTIFICATE' /etc/ssl/cert.pem)"; after="$(grep -c 'BEGIN CERTIFICATE' "$WORK/cert.pem")"
+  before="$(grep -c 'BEGIN CERTIFICATE' /etc/ssl/cert.pem)"
+  after="$(grep -c 'BEGIN CERTIFICATE' "$WORK/cert.pem")"
   if [ "$after" -lt 100 ] || [ $((before - after)) -gt 2 ] || grep -qE "^=== .*/CN=($REM_BAD_ROOT_CNS)\$" "$WORK/cert.pem" || rem_pem_bundle_has_bad_roots "$WORK/cert.pem"; then
     echo "   STOP: the filtered file looks wrong ($before -> $after certificates). Nothing was changed. Report it at $REM_ISSUES" >&2
     exit 1
@@ -57,9 +67,10 @@ else
 fi
 
 echo "== 2. Apple's built-in pip"
-if xcode-select -p >/dev/null 2>&1; then
+if xcode-select -p > /dev/null 2>&1; then
   F="$(/usr/bin/python3 -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')/sitecustomize.py"
-  if grep -qs 'PIP_CERT' "$F"; then echo "   already present in $F"
+  if grep -qs 'PIP_CERT' "$F"; then
+    echo "   already present in $F"
   elif [ "$DRY" = 1 ]; then echo "   would append PIP_CERT=/etc/ssl/cert.pem to $F"; else
     bak="$(rem_backup "$F")"
     case "$bak" in *.absent) undo="sudo rm -f $(rem_q "$F")" ;; *) undo="$(rem_restore_cmd "$bak" "$F" sudo)" ;; esac
@@ -75,20 +86,28 @@ fi
 echo "== 3. Never Trust the 16 compromised intermediates in the System keychain"
 # Refuse to touch the keychain unless every file is one of the 16 pinned certificates.
 for f in "$CERTDIR"/*.pem; do
-  h="$(openssl x509 -in "$f" -outform DER 2>/dev/null | shasum -a 256 | awk '{print toupper($1)}')"
+  h="$(openssl x509 -in "$f" -outform DER 2> /dev/null | shasum -a 256 | awk '{print toupper($1)}')"
   case " $(printf '%s' "$REM_INTERMEDIATE_SHA256" | tr '\n' ' ') " in *" $h "*) ;; *)
     echo "   STOP: $(basename "$f") is not one of the 16 pinned compromised intermediates, so the keychain was not changed. Report it at $REM_ISSUES" >&2
-    exit 1 ;;
+    exit 1
+    ;;
   esac
 done
-security trust-settings-export -d "$WORK/trust.plist" >/dev/null 2>&1 || : > "$WORK/trust.plist"
+security trust-settings-export -d "$WORK/trust.plist" > /dev/null 2>&1 || : > "$WORK/trust.plist"
 for f in "$CERTDIR"/*.pem; do
   name="$(basename "$f")"
   sha1="$(openssl x509 -in "$f" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g')"
-  res="$(/usr/libexec/PlistBuddy -c "Print :trustList:$sha1:trustSettings:0:kSecTrustSettingsResult" "$WORK/trust.plist" 2>/dev/null || true)"
-  if [ "$res" = 3 ]; then echo "   already denied: $name"; continue; fi
-  if [ "$DRY" = 1 ]; then echo "   would deny $name"; continue; fi
-  keep="$REM_BACKUP_DIR/$name"; cp "$f" "$keep"
+  res="$(/usr/libexec/PlistBuddy -c "Print :trustList:$sha1:trustSettings:0:kSecTrustSettingsResult" "$WORK/trust.plist" 2> /dev/null || true)"
+  if [ "$res" = 3 ]; then
+    echo "   already denied: $name"
+    continue
+  fi
+  if [ "$DRY" = 1 ]; then
+    echo "   would deny $name"
+    continue
+  fi
+  keep="$REM_BACKUP_DIR/$name"
+  cp "$f" "$keep"
   if sudo security add-trusted-cert -d -r deny -k /Library/Keychains/System.keychain "$keep"; then
     rem_log "$SRC" "keychain deny $name" "SHA-1 $sha1" \
       "sudo security remove-trusted-cert -d $(rem_q "$keep") && sudo security delete-certificate -Z $sha1 /Library/Keychains/System.keychain"
@@ -99,20 +118,33 @@ for f in "$CERTDIR"/*.pem; do
 done
 
 echo "== 4. JDK cacerts, for JDKs that are not patched (fixed releases: $REM_JDK_FIXED)"
-NET=0; curl -sS -o /dev/null -m 20 "$REM_CONTROL" 2>/dev/null && NET=1
+NET=0
+curl -sS -o /dev/null -m 20 "$REM_CONTROL" 2> /dev/null && NET=1
 rem_jdk_homes | while IFS= read -r J; do
   C="$(rem_cacerts "$J")" || continue
-  K="$J/bin/keytool"; [ -x "$K" ] || continue
+  K="$J/bin/keytool"
+  [ -x "$K" ] || continue
   # A patched JDK (or one blocked by hand) is left alone: its fix is in blocked.certs, not cacerts.
   verdict="$(rem_jdk_verdict "$J" "$NET")"
-  case "$verdict" in pass\|*) echo "   $J: already safe (${verdict#pass|})"; continue ;; esac
+  case "$verdict" in pass\|*)
+    echo "   $J: already safe (${verdict#pass|})"
+    continue
+    ;;
+  esac
   aliases="$(rem_bad_aliases "$K" "$C")"
-  [ -n "$aliases" ] || { echo "   $J: already fixed"; continue; }
-  if [ "$DRY" = 1 ]; then echo "   would remove from $C: $(echo "$aliases" | tr '\n' ',')"; continue; fi
-  S=""; [ -w "$C" ] || S=sudo
+  [ -n "$aliases" ] || {
+    echo "   $J: already fixed"
+    continue
+  }
+  if [ "$DRY" = 1 ]; then
+    echo "   would remove from $C: $(echo "$aliases" | tr '\n' ',')"
+    continue
+  fi
+  S=""
+  [ -w "$C" ] || S=sudo
   undo="$(rem_restore_cmd "$(rem_backup "$C" $S)" "$C" $S)"
   while IFS= read -r a; do
-    [ -n "$a" ] && $S "$K" -delete -keystore "$C" -storepass changeit -alias "$a" </dev/null
+    [ -n "$a" ] && $S "$K" -delete -keystore "$C" -storepass changeit -alias "$a" < /dev/null
   done <<< "$aliases"
   rem_log "$SRC" "removed affected roots from JDK cacerts" "$C: $(echo "$aliases" | tr '\n' ',')" "$undo"
   echo "   $J: removed $(echo "$aliases" | tr '\n' ' ')"
