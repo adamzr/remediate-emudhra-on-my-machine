@@ -151,7 +151,8 @@ def skill_version(text: str) -> str | None:
     match = re.match(r"^---\n(.*?)\n---\n", text, re.S)
     data = yaml.safe_load(match.group(1)) if match else None
     meta = (data or {}).get("metadata") or {}
-    return meta.get("version") if isinstance(meta, dict) else None
+    version = meta.get("version") if isinstance(meta, dict) else None
+    return None if version is None else str(version)
 
 
 def semver(v: str) -> tuple[int, ...]:
@@ -172,7 +173,12 @@ def check_versions(skills: list[Path], since: str | None) -> None:
         if since is None:
             continue
         rel = skill_dir.relative_to(ROOT).as_posix()
-        changed = subprocess.run(["git", "diff", "--name-only", f"{since}...HEAD", "--", rel],
+        base = subprocess.run(["git", "merge-base", since, "HEAD"], cwd=ROOT, capture_output=True, text=True)
+        if base.returncode != 0:
+            fail(changelog, f"--since {since} is not a git ref here (fetch it first)")
+            return
+        # Against the working tree, so uncommitted changes count too.
+        changed = subprocess.run(["git", "diff", "--name-only", base.stdout.strip(), "--", rel],
                                  cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
         if not changed:
             continue

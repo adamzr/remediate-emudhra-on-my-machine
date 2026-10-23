@@ -8,6 +8,7 @@
 #   - markdownlint: every .md, from .markdownlint-cli2.jsonc
 #   - actionlint: the GitHub workflows
 #   - validate: tools/validate_skill.py, with --since when a base ref is given
+#   - skills-ref: the Agent Skills reference validator
 #
 # Usage: tools/lint.sh [--fix] [--since REF]   (from anywhere in the repository)
 # Tools that are not installed are reported and skipped; CI runs all of them.
@@ -30,8 +31,12 @@ while [ $# -gt 0 ]; do
 done
 
 status=0
+skipped=0
 step() { printf '== %s\n' "$1"; }
-missing() { echo "   skipped: $1 is not installed (CI runs it)"; }
+missing() {
+  echo "   skipped: $1 is not installed (CI runs it)"
+  skipped=$((skipped + 1))
+}
 shs=(skills/*/scripts/*.sh tools/*.sh)
 
 step shellcheck
@@ -59,7 +64,20 @@ step actionlint
 if command -v actionlint > /dev/null; then actionlint || status=1; else missing actionlint; fi
 
 step validate
-python3 tools/validate_skill.py ${SINCE:+--since "$SINCE"} || status=1
+if python3 -c 'import yaml' 2> /dev/null; then
+  python3 tools/validate_skill.py ${SINCE:+--since "$SINCE"} || status=1
+else
+  missing "PyYAML (python3 -m pip install pyyaml)"
+fi
 
-[ "$status" = 0 ] && echo "All checks passed." || echo "Some checks failed."
+step skills-ref
+if command -v npx > /dev/null; then npx --yes skills-ref@0.1.5 validate skills/remediate-emudhra-on-my-machine || status=1; else missing npx; fi
+
+if [ "$status" != 0 ]; then
+  echo "Some checks failed."
+elif [ "$skipped" -gt 0 ]; then
+  echo "All checks that ran passed ($skipped skipped)."
+else
+  echo "All checks passed."
+fi
 exit "$status"

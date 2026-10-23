@@ -4,6 +4,7 @@
 #   1. a plain venv with an old pip and certifi: both are upgraded and logged
 #   2. a venv dressed as a conda environment whose certifi says conda installed it (INSTALLER = conda):
 #      the script leaves it alone, prints a conda install command, and exits 3
+#   3. the same environment with an old conda ca-certificates record: the conda command includes it
 #
 # Usage: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools\ci-fix-python.ps1
 $ErrorActionPreference = 'Stop'
@@ -35,6 +36,14 @@ $out | Write-Output
 if ($rc -ne 3) { Fail "expected exit 3, got $rc" }
 if (-not ($out -match "conda install -p .*certifi>=2026\.10\.19")) { Fail 'no conda install advice' }
 if ((Get-Ver $py 'certifi') -ne '2024.08.30') { Fail 'pip touched a conda-owned certifi' }
+
+Write-Output '== 3. old conda ca-certificates'
+Set-Content -Path (Join-Path $t 'conda\conda-meta\ca-certificates-2026.9.25-h0_0.json') -Value '{"name": "ca-certificates", "version": "2026.9.25", "channel": "pkgs/main"}'
+$out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $fix -Python $py
+$rc = $LASTEXITCODE
+$out | Write-Output
+if ($rc -ne 3) { Fail "expected exit 3, got $rc" }
+if (-not ($out -match 'ca-certificates>=2026\.10\.20')) { Fail 'no ca-certificates in the conda command' }
 
 Remove-Item -Recurse -Force $t
 Write-Output 'OK: fix-python-env.ps1 upgrades pip-owned packages, and leaves conda-owned ones to conda'

@@ -6,7 +6,8 @@
 # Debian/Ubuntu family (Debian, Ubuntu, Pop!_OS, Mint):
 #   1. Upgrades the ca-certificates package (the distribution fix, when it has shipped).
 #   2. Only if the system store still trusts a compromised chain: distrusts the two affected roots in
-#      /etc/ca-certificates.conf, exactly as https://emudhra.we-have-a-problem.com/ prescribes.
+#      /etc/ca-certificates.conf, exactly as https://emudhra.we-have-a-problem.com/ prescribes, and rebuilds
+#      the ca-certificates-java store when that package is installed, as the site also advises.
 # Fedora/RHEL family (Fedora, RHEL, CentOS Stream, Rocky, Alma, Amazon Linux 2023):
 #   1. Upgrades the ca-certificates package with dnf.
 #   2. Only if the system store still trusts a compromised chain: copies the two affected roots into the
@@ -213,12 +214,26 @@ elif trusts_bad_chain; then
       conf=/etc/ca-certificates.conf
       bak="$(rem_backup "$conf")"
       undo="$(rem_restore_cmd "$bak" "$conf" sudo) && sudo update-ca-certificates --fresh"
+      # The incident site: the Java store from ca-certificates-java can fall out of sync, so rebuild it too.
+      javasync=""
+      if dpkg-query -W -f='${Status}' ca-certificates-java 2> /dev/null | grep -q 'install ok installed'; then
+        javasync="sudo touch /var/lib/ca-certificates-java/fresh && sudo dpkg-reconfigure ca-certificates-java"
+        undo="$undo && $javasync"
+      fi
       sudo sed -i \
         -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt|!&|' \
         -e 's|^mozilla/Comodo_AAA_Services_root.crt|!&|' \
         "$conf"
       sudo update-ca-certificates
+      # Log first, so the undo is recorded even if the Java store rebuild below fails.
       rem_log "$SRC" "distrusted 2 roots in $conf" "backup $bak" "$undo"
+      if [ -n "$javasync" ]; then
+        if sudo touch /var/lib/ca-certificates-java/fresh && sudo dpkg-reconfigure ca-certificates-java > /dev/null; then
+          echo "   rebuilt the Java certificate store (ca-certificates-java)"
+        else
+          echo "   WARNING: rebuilding the Java certificate store failed; run: $javasync"
+        fi
+      fi
       echo "   distrusted; backup at $bak"
       ;;
     fedora)
