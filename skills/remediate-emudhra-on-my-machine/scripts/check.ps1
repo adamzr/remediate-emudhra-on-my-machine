@@ -23,7 +23,7 @@ function Test-Schannel($url) {
     catch { return 'error' }
 }
 
-try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { $null = $_ }  # deliberately ignored
 Write-Output "# eMudhra remediation check $((Get-Date).ToUniversalTime().ToString('s'))Z on Windows"
 $net = (Test-Schannel $RemControl) -eq 'trusted'
 if (-not $net) { Emit FAIL network control "UNVERIFIED: cannot reach $RemControl. Live tests were skipped, so this run cannot confirm the machine is safe. Reconnect and run the check again" }
@@ -36,7 +36,7 @@ if ($pol -and $pol.DisableRootAutoUpdate -eq 1) {
     Emit FAIL os auto-root-update "Automatic root certificate updates are disabled by policy, so Microsoft's block cannot arrive; the admin script adds it locally"
 }
 $have = @(Get-ChildItem Cert:\LocalMachine\Disallowed -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Thumbprint)
-$need = Get-RemIntermediates | ForEach-Object { $_.Thumbprint }
+$need = Get-RemIntermediate | ForEach-Object { $_.Thumbprint }
 $missing = @($need | Where-Object { $have -notcontains $_ }).Count
 Emit INFO os untrusted-store "$((16 - $missing)) of 16 compromised intermediates are in LocalMachine\Disallowed (Microsoft's own update blocks them separately)"
 if ($net) {
@@ -170,7 +170,7 @@ else {
     $locks = @(Get-ChildItem $dev -Filter uv.lock -Recurse -Depth 2 -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\node_modules\\' } | ForEach-Object {
         # Every certifi entry (a forked lock can have more than one); keep the oldest. [string] guards an empty file.
         $vs = @([regex]::Matches([string](Get-Content $_.FullName -Raw), '(?m)^name = "certifi"\r?\nversion = "([^"]+)"') | ForEach-Object {
-            try { [version]$_.Groups[1].Value } catch { }
+            try { [version]$_.Groups[1].Value } catch { $null = $_ }  # deliberately ignored
         } | Sort-Object)
         if ($vs.Count -gt 0 -and $vs[0] -lt [version]'2026.10.19') { "$($vs[0]) $($_.DirectoryName)" }
     })
@@ -197,8 +197,8 @@ foreach ($n in ($nodes | Sort-Object -Unique)) {
 }
 
 # ---- Java ----
-foreach ($j in (Get-RemJdkHomes)) {
-    if (-not (Get-RemCacerts $j)) { continue }
+foreach ($j in (Get-RemJdkHome)) {
+    if (-not (Get-RemCacertsFile $j)) { continue }
     $verdict = Get-RemJdkVerdict $j $net
     if ($verdict.Pass) { Emit PASS java $j $verdict.Detail } else { Emit FAIL java $j $verdict.Detail }
 }
@@ -223,7 +223,7 @@ function Test-RemTool($area, $name, $exe, [string[]]$versionArgs, $field, $fixed
     $v = (@(Invoke-RemNative $cmd.Source $versionArgs) | Select-Object -First 1) -split '\s+' | Select-Object -Index $field
     $vv = ($v -replace '^v', '') -replace '[^0-9.].*$', ''
     if ($vv -notmatch '^\d') { Emit WARN $area $name "installed, but its version could not be read (fixed: $fixed)"; return }
-    $ok = $false; try { $ok = [version]$vv -ge [version]$fixed } catch { }
+    $ok = $false; try { $ok = [version]$vv -ge [version]$fixed } catch { $null = $_ }  # deliberately ignored
     if ($ok) { Emit PASS $area $name "$name $v" } else { Emit FAIL $area $name "$name $v (fixed: $fixed)" }
 }
 Test-RemTool rust rustup 'rustup.exe' @('--version') 1 '1.29.2'

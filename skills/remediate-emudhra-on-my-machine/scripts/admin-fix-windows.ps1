@@ -27,7 +27,7 @@ Initialize-RemState
 Write-Host "Action log: $RemLog"
 
 Write-Host '== 1. Block the 16 compromised intermediates (LocalMachine\Disallowed)'
-$certs = Get-RemIntermediates
+$certs = Get-RemIntermediate
 $have = @(Get-ChildItem Cert:\LocalMachine\Disallowed | Select-Object -ExpandProperty Thumbprint)
 foreach ($c in $certs) {
     $label = $c.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
@@ -41,13 +41,13 @@ foreach ($c in $certs) {
 
 Write-Host "== 2. JDK cacerts, for JDKs that are not patched (fixed releases: $RemJdkFixed)"
 $net = $false
-try { $r = [System.Net.WebRequest]::Create($RemControl); $r.Timeout = 20000; $r.GetResponse().Close(); $net = $true } catch { }
-foreach ($j in (Get-RemJdkHomes)) {
-    $cac = Get-RemCacerts $j; if (-not $cac) { continue }
+try { $r = [System.Net.WebRequest]::Create($RemControl); $r.Timeout = 20000; $r.GetResponse().Close(); $net = $true } catch { $null = $_ }  # deliberately ignored
+foreach ($j in (Get-RemJdkHome)) {
+    $cac = Get-RemCacertsFile $j; if (-not $cac) { continue }
     $verdict = Get-RemJdkVerdict $j $net
     if ($verdict.Pass) { Write-Host "   ${j}: already safe ($($verdict.Detail))"; continue }
     $k = Join-Path $j 'bin\keytool.exe'
-    $bad = @(Get-RemBadAliases $k $cac)
+    $bad = @(Get-RemBadAlias $k $cac)
     if ($bad.Count -eq 0) { Write-Host "   ${j}: already fixed"; continue }
     if ($DryRun) { Write-Host "   would remove from ${cac}: $($bad -join ', ')"; continue }
     $bak = Backup-RemFile $cac
