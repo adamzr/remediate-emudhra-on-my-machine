@@ -46,8 +46,8 @@ if ($conda) {
     if ($oldCertifi -and (Test-CondaOwned 'certifi' $certifiInst)) {
         $skipCertifi = $true
         if (Test-Old $oldCertifi '2026.10.19') {
-            # The fixed certifi needs Python 3.10+, so conda cannot install it here; it would report success and change nothing.
-            if (-not $py310) { Write-Host "FAIL: certifi $oldCertifi in $Python is vulnerable, and the fixed certifi needs Python 3.10 or later (this is $pyver). Retire this environment, or rebuild it on Python 3.10 or later."; exit 4 }
+            # conda's build of the fixed certifi needs Python 3.10+ (the PyPI one needs only 3.7), so conda cannot install it here; it would report success and change nothing.
+            if (-not $py310) { Write-Host "FAIL: certifi $oldCertifi in $Python is vulnerable, and conda's build of the fixed certifi needs Python 3.10 or later (this is $pyver). Retire this environment, or rebuild it on Python 3.10 or later."; exit 4 }
             $condaPkgs += '"certifi>=2026.10.19"'
         }
     }
@@ -68,7 +68,7 @@ if (-not $oldPip) {
     if (-not $uv) { Write-Host "FAIL: certifi $oldCertifi in $Python is vulnerable, and this environment has neither pip nor uv to upgrade it."; exit 4 }
     Write-Host "Upgrading certifi in $Python with uv (this environment has no pip)"
     Invoke-RemNative $uv.Source @('pip', 'install', '--python', $Python, 'certifi>=2026.10.19') | Write-Host
-    if ($LASTEXITCODE -ne 0) { Write-Host 'uv reported an error; nothing was logged as changed.'; exit 1 }
+    if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: uv could not install the fixed certifi in $Python; nothing was changed."; exit 4 }
     $newCertifi = (Invoke-RemNative $Python @('-c', 'import certifi; print(certifi.__version__)') | Select-Object -Last 1).Trim()
     Write-RemLog 'vetted-script:fix-python-env.ps1' "upgraded certifi in $Python (uv)" "certifi $oldCertifi -> $newCertifi" "uv pip install --python $qpy certifi==$oldCertifi"
     Write-Host "Done. certifi $newCertifi. Logged to $RemLog"; exit 0
@@ -79,7 +79,14 @@ if (-not $skipPip) {
     if ($py310) { $pkgs += 'pip>=26.2.2' } else { Write-Host "NOTE: Python $pyver cannot run the fixed pip (needs 3.10+). Upgrading certifi only." }
 }
 if ($oldCertifi -and -not $skipCertifi) { $pkgs += 'certifi>=2026.10.19' }
-if ($pkgs.Count -eq 0) { Show-CondaAdvice; Write-Host "Nothing to upgrade in $Python."; exit 0 }
+# Exits 4 when this Python's pip is vulnerable and cannot be fixed (the fixed pip needs 3.10+).
+function Test-PipStaysOld {
+    if (-not $py310 -and -not $skipPip -and $oldPip -and (Test-Old $oldPip '26.2.2')) {
+        Write-Host "FAIL: pip $oldPip in $Python stays vulnerable: the fixed pip needs Python 3.10 or later (this is $pyver). Retire this environment, or rebuild it on Python 3.10 or later."
+        exit 4
+    }
+}
+if ($pkgs.Count -eq 0) { Show-CondaAdvice; Test-PipStaysOld; Write-Host "Nothing to upgrade in $Python."; exit 0 }
 
 Write-Host "Upgrading in $Python with its own pip: $($pkgs -join ' ')"
 Invoke-RemNative $Python (@('-m', 'pip', 'install', '--disable-pip-version-check', '--upgrade') + $pkgs) | Write-Host
@@ -101,3 +108,4 @@ $detail = $parts -join ', '
 Write-RemLog 'vetted-script:fix-python-env.ps1' "upgraded pip/certifi in $Python" $detail $undo
 Write-Host "Done. $detail. Logged to $RemLog"
 Show-CondaAdvice
+Test-PipStaysOld

@@ -32,5 +32,5 @@ Only the latest release is supported. Install or update with `npx skills add ada
 
 The skill asks before every action, but you can also check the scripts yourself:
 - Each admin script (`scripts/admin-fix-*.sh`, `scripts/admin-fix-windows.ps1`) lists everything it changes in its header comment, and supports `--dry-run` (`-DryRun` on Windows).
-- The compromised certificates are pinned by SHA-256 fingerprint in `scripts/lib.sh` and `scripts/lib.ps1`, and the Windows script refuses to run if `assets/impacted-intermediates.json` contains anything else. Compare them with the incident site's [impacted-intermediates.json](https://emudhra.we-have-a-problem.com/).
+- The 16 compromised intermediates are pinned by SHA-256 fingerprint in `scripts/lib.sh` and `scripts/lib.ps1`, and the two affected roots by fingerprint in both. The Windows admin script refuses to run if `assets/impacted-intermediates.json` contains anything else, and the macOS admin script refuses to touch the keychain unless every file in `assets/compromised-intermediates/` matches the pins. Compare the pins with the incident site's [impacted-intermediates.json](https://emudhra.we-have-a-problem.com/impacted-intermediates.json).
 - Every change is backed up and logged with an undo command in `~/.remediate-emudhra/actions.log`.

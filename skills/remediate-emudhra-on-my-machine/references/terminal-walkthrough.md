@@ -37,7 +37,7 @@ bash "<absolute path>/scripts/admin-fix-macos.sh"
 
 1. "Click the Start button (or press the Windows key) and type **PowerShell**."
 2. "In the results, **right-click Windows PowerShell** and choose **Run as administrator**."
-3. "Windows asks **Do you want to allow this app to make changes to your device?** Click **Yes**." If it asks for an administrator password instead, the user has a standard account: stop: they need whoever administers this computer (often IT) to run this step.
+3. "Windows asks **Do you want to allow this app to make changes to your device?** Click **Yes**." If it asks for an administrator password instead, the user has a standard account. Stop here, because whoever administers this computer (often IT) needs to run this step.
 4. "The window title should start with **Administrator**. Click inside it, then right-click once to paste the command I give you." (Ctrl+V also works in newer versions.)
 5. "Press Enter."
 6. "When you see **Done. Go back to your AI agent**, come back here and type **done**."
@@ -45,7 +45,7 @@ bash "<absolute path>/scripts/admin-fix-macos.sh"
 Paste the command:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<absolute path>\scripts\admin-fix-windows.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<absolute path>/scripts/admin-fix-windows.ps1"
 ```
 
 `-ExecutionPolicy Bypass` applies to this one command only; it does not change the computer's settings. Say that if the user asks.

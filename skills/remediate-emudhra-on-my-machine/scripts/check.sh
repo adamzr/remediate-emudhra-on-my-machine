@@ -42,10 +42,16 @@ if [ "$OS" = Darwin ]; then
   fi
   if [ ! -r /etc/ssl/cert.pem ]; then
     emit WARN truststore /etc/ssl/cert.pem "missing or unreadable; rely on the live curl results"
-  elif grep -qE "^=== .*/CN=($REM_BAD_ROOT_CNS)\$" /etc/ssl/cert.pem; then
-    emit FAIL truststore /etc/ssl/cert.pem "still contains AAA Certificate Services or emSign ECC Root CA - G3 (Apple's curl, git, python3 use it; admin script fixes it)"
   else
-    emit PASS truststore /etc/ssl/cert.pem "affected roots removed"
+    # By header line and by fingerprint, so a change to the file's format can never read as fixed.
+    fp=0; rem_pem_bundle_has_bad_roots /etc/ssl/cert.pem || fp=$?
+    if grep -qE "^=== .*/CN=($REM_BAD_ROOT_CNS)\$" /etc/ssl/cert.pem || [ "$fp" -eq 0 ]; then
+      emit FAIL truststore /etc/ssl/cert.pem "still contains AAA Certificate Services or emSign ECC Root CA - G3 (Apple's curl, git, python3 use it; admin script fixes it)"
+    elif [ "$fp" -eq 2 ]; then
+      emit WARN truststore /etc/ssl/cert.pem "could not inspect by fingerprint (no openssl command); rely on the live curl results"
+    else
+      emit PASS truststore /etc/ssl/cert.pem "affected roots removed"
+    fi
   fi
 elif [ -e /etc/NIXOS ]; then
   emit INFO os NixOS "$(. /etc/os-release; echo "$PRETTY_NAME")"
@@ -132,6 +138,11 @@ def vt(s):
 def emit(st, detail): print("%s|python|%s|%s" % (st, label, detail))
 system_owned = label.startswith(("/usr/bin/", "/usr/lib/", "/System/", "/Library/Developer/", "/Applications/Xcode"))
 ver = sys.version.split()[0]
+# CPython itself has patched releases on these lines (per the incident site).
+FIX_PY = {(3, 13): (3, 13, 17), (3, 14): (3, 14, 9), (3, 15): (3, 15, 1)}
+fixed_py = FIX_PY.get(tuple(sys.version_info[:2]))
+if fixed_py and tuple(sys.version_info[:3]) < fixed_py and not system_owned:
+    emit("WARN", "Python %s: the patched release on this line is %s; upgrade when you can" % (sys.version.split()[0], ".".join(map(str, fixed_py))))
 if sys.version_info < (3, 10) and not system_owned:
     emit("WARN", "Python %s is end of life; the fixed pip needs 3.10+%s. Remove it if nothing uses it" % (ver, " and Python 2 cannot run the fixed certifi (the last release for it is 2021.10.8)" if sys.version_info[0] < 3 else ""))
 pip_cert = os.environ.get("PIP_CERT", "")
@@ -216,13 +227,13 @@ pys="$pys
 $(rem_conda_pythons | while IFS= read -r p; do if [ -x "$p" ]; then rem_realpath "$p"; fi; done)"
 printf '%s\n' "$pys" | awk 'NF && !seen[$0]++' | while IFS= read -r py; do
   rem_mac_tool_ok "$py" || continue
-  "$py" "$PYTEST" "$py" "$NET" "$REM_BAD_EMSIGN" "$REM_BAD_AAA" "$REM_CONTROL" 2>/dev/null || emit WARN python "$py" "could not run"
+  "$py" -B "$PYTEST" "$py" "$NET" "$REM_BAD_EMSIGN" "$REM_BAD_AAA" "$REM_CONTROL" 2>/dev/null || emit WARN python "$py" "could not run"
 done
 rm -f "$PYTEST"
 DEVS="$(rem_project_dirs)"
 WHERE="$(printf '%s' "$DEVS" | tr '\n' ',' | sed 's/,/, /g')"
 if [ -z "$DEVS" ]; then
-  emit INFO projects none "no project folder found (looked for ~/Development, ~/dev, ~/src, ~/code, ~/projects, ~/repos, ~/git, ~/workspace); set REMEDIATE_EMUDHRA_PROJECTS to scan yours for virtualenvs and lock files"
+  emit INFO projects none "no project folder found (looked for ~/Development, ~/dev, ~/src, ~/code, ~/projects, ~/repos, ~/git, ~/workspace, ~/source/repos); set REMEDIATE_EMUDHRA_PROJECTS to scan yours for virtualenvs and lock files"
 fi
 venvs="$(printf '%s\n' "$DEVS" | while IFS= read -r d; do [ -n "$d" ] && find "$d" -maxdepth 4 -name pyvenv.cfg 2>/dev/null; done | wc -l | tr -d ' ')"
 [ "$venvs" -gt 0 ] && emit INFO python virtualenvs "$venvs project virtualenvs under $WHERE; each has its own certifi (see fix-recipes)"
@@ -294,11 +305,9 @@ fi
 
 # ---- Java ----
 rem_jdk_homes | while IFS= read -r j; do
-  c="$(rem_cacerts "$j")" || continue
-  k="$j/bin/keytool"; [ -x "$k" ] || { emit WARN java "$j" "no keytool"; continue; }
-  bad="$(rem_bad_aliases "$k" "$c" | tr '\n' ',' | sed 's/,$//')"
-  if [ -n "$bad" ]; then emit FAIL java "$j" "cacerts still trusts: $bad (no fixed JDK yet; admin script removes them)"
-  else emit PASS java "$j" "affected roots absent from cacerts"; fi
+  rem_cacerts "$j" >/dev/null || continue
+  verdict="$(rem_jdk_verdict "$j" "$NET")"
+  case "$verdict" in pass\|*) emit PASS java "$j" "${verdict#pass|}" ;; *) emit FAIL java "$j" "${verdict#fail|}" ;; esac
 done
 
 # ---- Other developer tools ----
@@ -320,7 +329,14 @@ if command -v deno >/dev/null; then
   v="$(deno --version | awk 'NR==1{print $2}')"
   if rem_ver_ge "$v" 2.9.8; then emit PASS deno deno "Deno $v"; else emit FAIL deno deno "Deno $v (fixed: 2.9.8)"; fi
 fi
-command -v bun >/dev/null && emit WARN bun bun "Bun has no fixed release yet; avoid it for sensitive downloads"
+# tool_ver AREA NAME FIXED VERSION -> PASS or FAIL line for a tool with one fixed release.
+tool_ver() { if rem_ver_ge "$4" "$3"; then emit PASS "$1" "$2" "$2 $4"; else emit FAIL "$1" "$2" "$2 $4 (fixed: $3)"; fi; }
+if command -v bun >/dev/null; then tool_ver bun bun 1.4.4 "$(bun --version 2>/dev/null)"; fi
+if command -v conda >/dev/null; then tool_ver conda conda 26.9.4 "$(conda --version 2>/dev/null | awk '{print $2}')"; fi
+if command -v mise >/dev/null; then tool_ver mise mise 2026.10.17 "$(mise --version 2>/dev/null | awk '{print $1}')"; fi
+if command -v pixi >/dev/null; then tool_ver pixi pixi 0.82.1 "$(pixi --version 2>/dev/null | awk '{print $2}')"; fi
+# The agent running this skill may itself be exposed.
+if command -v claude >/dev/null; then tool_ver agent "Claude Code" 2.1.303 "$(claude --version 2>/dev/null | awk '{print $1}')"; fi
 if command -v brew >/dev/null; then
   BREW_PREFIX="$(brew --prefix)"
   # brew_ver FORMULA -> the version in use (the linked keg), else the newest installed. The fix recipes keep
@@ -355,7 +371,7 @@ if command -v brew >/dev/null; then
   fi
 fi
 
-emit INFO browsers manual "Open $REM_BAD_EMSIGN and $REM_BAD_AAA in every browser; each must show a certificate error"
-emit INFO apps manual "Update Electron apps (Slack, Zoom, VS Code, 1Password, Docker Desktop, Claude Desktop) to their latest versions"
+emit INFO browsers manual "Open $REM_BAD_EMSIGN, $REM_BAD_AAA, $REM_BAD_EMSIGN_NOCT, and $REM_BAD_AAA_NOCT in every browser; each must show a certificate error"
+emit INFO apps manual "Update Electron apps (Slack, Zoom, VS Code, 1Password, Claude Desktop) and Docker Desktop (fixed: 4.96.2) to their latest versions"
 echo "# Report saved to $REPORT"
 rem_log "vetted-script:check.sh" "read-only check" "report $REPORT" "nothing to undo"

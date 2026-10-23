@@ -70,10 +70,11 @@ if [ -n "$conda" ]; then
   if [ -n "$old_certifi" ] && conda_owned certifi "$certifi_inst"; then
     skip_certifi=1
     if ! rem_ver_ge "$old_certifi" 2026.10.19; then
-      # The fixed certifi needs Python 3.10+, so conda cannot install it here; it would report success
+      # conda's build of the fixed certifi needs Python 3.10+ (the PyPI one needs only 3.7), so conda
+      # cannot install it here; it would report success
       # and change nothing.
       if [ "$py310" = 0 ]; then
-        echo "FAIL: certifi $old_certifi in $PY is vulnerable, and the fixed certifi needs Python 3.10 or later (this is $pyver). Retire this environment, or rebuild it on Python 3.10 or later."
+        echo "FAIL: certifi $old_certifi in $PY is vulnerable, and conda's build of the fixed certifi needs Python 3.10 or later (this is $pyver). Retire this environment, or rebuild it on Python 3.10 or later."
         exit 4
       fi
       conda_pkgs="${conda_pkgs:+$conda_pkgs }'certifi>=2026.10.19'"
@@ -123,7 +124,10 @@ if [ -z "$old_pip" ]; then
     exit 4
   fi
   echo "Upgrading certifi in $PY with uv (this environment has no pip)"
-  uv pip install --python "$PY" 'certifi>=2026.10.19'
+  if ! uv pip install --python "$PY" 'certifi>=2026.10.19'; then
+    echo "FAIL: uv could not install the fixed certifi in $PY; nothing was changed."
+    exit 4
+  fi
   new_certifi="$("$PY" -c 'import certifi; print(certifi.__version__)')"
   rem_log "vetted-script:fix-python-env.sh" "upgraded certifi in $PY (uv)" "certifi $old_certifi -> $new_certifi" \
     "uv pip install --python $QPY certifi==$old_certifi"
@@ -137,7 +141,14 @@ if [ "$skip_pip" = 0 ]; then
   else echo "NOTE: Python $pyver cannot run the fixed pip (needs 3.10+). Upgrading certifi only."; fi
 fi
 if [ -n "$old_certifi" ] && [ "$skip_certifi" = 0 ]; then pkgs="${pkgs:+$pkgs }certifi>=2026.10.19"; fi
-if [ -z "$pkgs" ]; then conda_advice; echo "Nothing to upgrade in $PY."; exit 0; fi
+# pip_stays_old -> exits 4 when this Python's pip is vulnerable and cannot be fixed (it needs 3.10+).
+pip_stays_old() {
+  if [ "$py310" = 0 ] && [ "$skip_pip" = 0 ] && [ -n "$old_pip" ] && ! rem_ver_ge "$old_pip" 26.2.2; then
+    echo "FAIL: pip $old_pip in $PY stays vulnerable: the fixed pip needs Python 3.10 or later (this is $pyver). Retire this environment, or rebuild it on Python 3.10 or later."
+    exit 4
+  fi
+}
+if [ -z "$pkgs" ]; then conda_advice; pip_stays_old; echo "Nothing to upgrade in $PY."; exit 0; fi
 
 echo "Upgrading in $PY with its own pip: $pkgs"
 # shellcheck disable=SC2086
@@ -158,3 +169,4 @@ esac
 rem_log "vetted-script:fix-python-env.sh" "upgraded pip/certifi in $PY" "$detail" "$undo"
 echo "Done. $detail. Logged to $REM_LOG"
 conda_advice
+pip_stays_old

@@ -10,6 +10,8 @@ $RemIssues = 'https://github.com/adamzr/remediate-emudhra-on-my-machine/issues'
 $RemBadEmsign = 'https://dv-g3b-emudhra.we-have-a-problem.com/'
 $RemBadAaa = 'https://dv-g3b-aaa-emudhra.we-have-a-problem.com/'
 $RemControl = 'https://github.com/'
+$RemBadEmsignNoCt = 'https://dv-g3b-noct-emudhra.we-have-a-problem.com/'
+$RemBadAaaNoCt = 'https://dv-g3b-aaa-noct-emudhra.we-have-a-problem.com/'
 
 # SHA-256 fingerprints of AAA Certificate Services and emSign ECC Root CA - G3 (roots.json on the incident site).
 $RemBadRootFps = @(
@@ -100,6 +102,75 @@ function Invoke-RemNative($exe, [string[]]$arguments) {
 function Invoke-RemCapture($exe, [string[]]$arguments) {
     $saved = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     try { ((& $exe @arguments 2>&1) | ForEach-Object { "$_" }) -join "`n" } finally { $ErrorActionPreference = $saved }
+}
+
+# Fixed JDK releases, per the incident site. Shown to users; versions are not compared, because the live
+# test and blocked.certs decide.
+$RemJdkFixed = '27.0.1.0.2, 25.0.5.0.2, 21.0.13.0.2, 17.0.21.0.2, 11.0.33.0.2, or 8u511'
+
+function Get-RemJdkVersion($jdk) {
+    $rel = Join-Path $jdk 'release'
+    if (Test-Path $rel) { foreach ($l in Get-Content $rel) { if ($l -match '^JAVA_VERSION="(.+)"$') { return $Matches[1] } } }
+    return ''
+}
+
+# Get-RemJdkBlockedCount JDK -> how many of the 16 compromised intermediates the JDK's blocked.certs
+# (blacklisted.certs on JDK 8) lists. A patched JDK blocks them there.
+function Get-RemJdkBlockedCount($jdk) {
+    foreach ($f in @((Join-Path $jdk 'lib\security\blocked.certs'), (Join-Path $jdk 'jre\lib\security\blacklisted.certs'), (Join-Path $jdk 'lib\security\blacklisted.certs'))) {
+        if (-not (Test-Path $f)) { continue }
+        $text = ((Get-Content $f -Raw) -replace ':', '').ToUpperInvariant()
+        return @($RemIntermediateSha256 | Where-Object { $text.Contains($_) }).Count
+    }
+    return 0
+}
+
+# Invoke-RemJavaProbe JDK URL... -> one result per URL (trusted, rejected, or error) from a live TLS connection
+# made by that JDK. Returns nothing when the JDK cannot run a single-file program (JDK 10 and older).
+function Invoke-RemJavaProbe($jdk, [string[]]$urls) {
+    $v = Get-RemJdkVersion $jdk
+    $major = 0; if ($v -match '^1\.(\d+)') { $major = [int]$Matches[1] } elseif ($v -match '^(\d+)') { $major = [int]$Matches[1] }
+    $java = Join-Path $jdk 'bin\java.exe'
+    if ($major -lt 11 -or -not (Test-Path $java)) { return @() }
+    $dir = Join-Path $env:TEMP ('remediate-emudhra-java-' + [guid]::NewGuid())
+    New-Item -ItemType Directory -Path $dir | Out-Null
+    $src = Join-Path $dir 'RemProbe.java'
+    @'
+public class RemProbe {
+    public static void main(String[] urls) {
+        for (String u : urls) {
+            String r;
+            try {
+                javax.net.ssl.HttpsURLConnection c = (javax.net.ssl.HttpsURLConnection) new java.net.URL(u).openConnection();
+                c.setConnectTimeout(20000); c.setReadTimeout(20000); c.getResponseCode(); r = "trusted";
+            } catch (javax.net.ssl.SSLHandshakeException e) {
+                String m = String.valueOf(e.getMessage()).toLowerCase();
+                r = (m.contains("pkix") || m.contains("certif") || m.contains("trust") || m.contains("revoked")) ? "rejected" : "error";
+            } catch (Exception e) { r = "error"; }
+            System.out.println(r);
+        }
+    }
+}
+'@ | Set-Content -Path $src -Encoding ASCII
+    try { return @(Invoke-RemNative $java (@('-Djava.net.useSystemProxies=true', $src) + $urls)) } finally { Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue }
+}
+
+# Get-RemJdkVerdict JDK NET -> @{ Pass = $true/$false; Detail = '...' }. A live test decides when it can run
+# (network, JDK 11+); otherwise a JDK is safe when blocked.certs lists all 16 intermediates (a patched JDK,
+# or a manual block) or when cacerts no longer has the two affected roots (the admin script's fix).
+function Get-RemJdkVerdict($jdk, $net) {
+    $v = Get-RemJdkVersion $jdk
+    if ($net) {
+        $r = (Invoke-RemJavaProbe $jdk @($RemControl, $RemBadEmsign, $RemBadAaa)) -join ' '
+        if ($r -eq 'trusted rejected rejected') { return @{ Pass = $true; Detail = "Java $v rejects both test hosts (live test)" } }
+        if ($r -match '^trusted .*trusted') { return @{ Pass = $false; Detail = "Java $v TRUSTS a compromised chain (live test). Upgrade to $RemJdkFixed (preferred), or run the admin script" } }
+    }
+    if ((Get-RemJdkBlockedCount $jdk) -ge 16) { return @{ Pass = $true; Detail = "Java $v blocks all 16 compromised intermediates in blocked.certs" } }
+    $c = Get-RemCacerts $jdk
+    if (-not $c) { return @{ Pass = $true; Detail = 'no cacerts file' } }
+    $bad = @(Get-RemBadAliases (Join-Path $jdk 'bin\keytool.exe') $c)
+    if ($bad.Count -eq 0) { return @{ Pass = $true; Detail = "Java ${v}: affected roots absent from cacerts" } }
+    return @{ Pass = $false; Detail = "Java ${v}: cacerts still trusts $($bad -join ', '). Upgrade to $RemJdkFixed (preferred), or run the admin script" }
 }
 
 # Get-RemBadAliases KEYTOOL CACERTS -> aliases of the two affected roots present in the keystore.

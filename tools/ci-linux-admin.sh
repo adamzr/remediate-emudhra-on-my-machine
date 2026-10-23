@@ -27,7 +27,7 @@ case " $ID ${ID_LIKE:-} " in
   *" debian "*|*" ubuntu "*)
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq && apt-get install -y -qq curl sudo ca-certificates openssl util-linux >/dev/null ;;
-  *" fedora "*|*" rhel "*|*" centos "*)
+  *" fedora "*|*" rhel "*|*" centos "*|*" amzn "*)
     dnf install -y -q sudo openssl p11-kit-trust util-linux-script >/dev/null 2>&1 || dnf install -y -q sudo openssl p11-kit-trust util-linux
     command -v curl >/dev/null || dnf install -y -q curl ;;
   *" arch "*)
@@ -41,7 +41,7 @@ if [ "${HOLD:-0}" = 1 ]; then
   echo "== Holding the CA package to simulate a distribution without its fix"
   case " $ID ${ID_LIKE:-} " in
     *" debian "*|*" ubuntu "*) apt-mark hold ca-certificates ;;
-    *" fedora "*|*" rhel "*|*" centos "*) echo 'exclude=ca-certificates' >> /etc/dnf/dnf.conf ;;
+    *" fedora "*|*" rhel "*|*" centos "*|*" amzn "*) echo 'exclude=ca-certificates' >> /etc/dnf/dnf.conf ;;
     *" arch "*)
       printf '%s\n' '#!/bin/sh' '# Test only: decline every pacman prompt.' 'yes n | /usr/bin/pacman "$@"' > /usr/local/bin/pacman
       chmod 755 /usr/local/bin/pacman ;;

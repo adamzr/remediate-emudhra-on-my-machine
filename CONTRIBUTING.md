@@ -39,7 +39,7 @@ The skill follows the [Agent Skills specification](https://agentskills.io/specif
 ## Checks to run before a pull request
 
 ```bash
-shellcheck -x -S warning skills/*/scripts/*.sh
+shellcheck -x -S warning skills/*/scripts/*.sh tools/*.sh
 python3 tools/validate_skill.py           # needs PyYAML
 npx --yes skills-ref@0.1.5 validate skills/remediate-emudhra-on-my-machine
 bash skills/remediate-emudhra-on-my-machine/scripts/check.sh   # read-only

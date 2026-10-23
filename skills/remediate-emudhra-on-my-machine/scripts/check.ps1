@@ -102,6 +102,10 @@ def vt(s):
     return tuple(int("".join(c for c in p if c.isdigit()) or 0) for p in str(s).split(".")[:3])
 def emit(st, d): print("%s|python|%s|%s" % (st, label, d))
 ver = sys.version.split()[0]
+FIX_PY = {(3, 13): (3, 13, 17), (3, 14): (3, 14, 9), (3, 15): (3, 15, 1)}
+fixed_py = FIX_PY.get(tuple(sys.version_info[:2]))
+if fixed_py and tuple(sys.version_info[:3]) < fixed_py:
+    emit("WARN", "Python %s: the patched release on this line is %s; upgrade when you can" % (ver, ".".join(map(str, fixed_py))))
 if sys.version_info < (3, 10):
     emit("WARN", "Python %s is end of life; the fixed pip needs 3.10+%s. Remove it if unused" % (ver, " and Python 2 cannot run the fixed certifi (the last release for it is 2021.10.8)" if sys.version_info[0] < 3 else ""))
 try:
@@ -148,7 +152,7 @@ $envList = Join-Path $env:USERPROFILE '.conda\environments.txt'
 if (Test-Path $envList) { Get-Content $envList | Where-Object { $_.Trim() } | ForEach-Object { $condaEnvs.Add($_.Trim()) } }
 foreach ($e in $condaEnvs) { $c = Join-Path $e 'python.exe'; if (Test-Path $c) { $pys.Add($c) } }
 foreach ($py in ($pys | Sort-Object -Unique)) {
-    & $py $pyTest $py $(if ($net) { '1' } else { '0' }) $RemBadEmsign $RemBadAaa $RemControl 2>$null | ForEach-Object { $lines.Add($_); Write-Output $_ }
+    & $py -B $pyTest $py $(if ($net) { '1' } else { '0' }) $RemBadEmsign $RemBadAaa $RemControl 2>$null | ForEach-Object { $lines.Add($_); Write-Output $_ }
 }
 Remove-Item $pyTest -ErrorAction SilentlyContinue
 # Project virtualenvs (Windows layout: <venv>\Lib\site-packages, interpreter <venv>\Scripts\python.exe).
@@ -194,11 +198,9 @@ foreach ($n in ($nodes | Sort-Object -Unique)) {
 
 # ---- Java ----
 foreach ($j in (Get-RemJdkHomes)) {
-    $c = Get-RemCacerts $j; if (-not $c) { continue }
-    $k = Join-Path $j 'bin\keytool.exe'; if (-not (Test-Path $k)) { continue }
-    $bad = Get-RemBadAliases $k $c
-    if ($bad) { Emit FAIL java $j "cacerts still trusts: $($bad -join ', ') (no fixed JDK yet; admin script removes them)" }
-    else { Emit PASS java $j 'affected roots absent from cacerts' }
+    if (-not (Get-RemCacerts $j)) { continue }
+    $verdict = Get-RemJdkVerdict $j $net
+    if ($verdict.Pass) { Emit PASS java $j $verdict.Detail } else { Emit FAIL java $j $verdict.Detail }
 }
 
 # ---- Other developer tools and browsers ----
@@ -214,10 +216,26 @@ if ($uv) {
     $v = ((& $uv.Source --version) -split ' ')[1]
     if ([version]$v -ge [version]'0.13.4') { Emit PASS uv uv "uv $v" } else { Emit FAIL uv uv "uv $v (fixed: 0.13.4)" }
 }
+# Tools with one fixed release each; the agent running this skill may itself be exposed (claude).
+function Test-RemTool($area, $name, $exe, [string[]]$versionArgs, $field, $fixed) {
+    $cmd = Get-Command $exe -ErrorAction SilentlyContinue
+    if (-not $cmd) { return }
+    $v = (@(Invoke-RemNative $cmd.Source $versionArgs) | Select-Object -First 1) -split '\s+' | Select-Object -Index $field
+    $vv = ($v -replace '^v', '') -replace '[^0-9.].*$', ''
+    $ok = $false; try { $ok = [version]$vv -ge [version]$fixed } catch { }
+    if ($ok) { Emit PASS $area $name "$name $v" } else { Emit FAIL $area $name "$name $v (fixed: $fixed)" }
+}
+Test-RemTool rust rustup 'rustup.exe' @('--version') 1 '1.29.2'
+Test-RemTool deno deno 'deno.exe' @('--version') 1 '2.9.8'
+Test-RemTool bun bun 'bun.exe' @('--version') 0 '1.4.4'
+Test-RemTool conda conda 'conda.exe' @('--version') 1 '26.9.4'
+Test-RemTool mise mise 'mise.exe' @('--version') 0 '2026.10.17'
+Test-RemTool pixi pixi 'pixi.exe' @('--version') 1 '0.82.1'
+Test-RemTool agent 'Claude Code' 'claude.exe' @('--version') 0 '2.1.303'
 $ff = Get-ItemProperty 'HKLM:\SOFTWARE\Mozilla\Mozilla Firefox' -ErrorAction SilentlyContinue
 if ($ff) { Emit INFO browsers firefox "Firefox $($ff.CurrentVersion): update it from Help > About Firefox" }
-Emit INFO browsers manual "Open $RemBadEmsign and $RemBadAaa in every browser; each must show a certificate error"
-Emit INFO apps manual 'Update Electron apps (Slack, Zoom, VS Code, 1Password, Docker Desktop, Claude Desktop) to their latest versions'
+Emit INFO browsers manual "Open $RemBadEmsign, $RemBadAaa, $RemBadEmsignNoCt, and $RemBadAaaNoCt in every browser; each must show a certificate error"
+Emit INFO apps manual 'Update Electron apps (Slack, Zoom, VS Code, 1Password, Claude Desktop) and Docker Desktop (fixed: 4.96.2) to their latest versions'
 
 $lines | Set-Content -Path $report -Encoding UTF8
 Write-Output "# Report saved to $report"

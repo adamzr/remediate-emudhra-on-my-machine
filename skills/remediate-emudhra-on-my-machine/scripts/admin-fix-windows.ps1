@@ -5,8 +5,9 @@
 #   1. Adds the 16 compromised intermediates to LocalMachine\Disallowed (Untrusted Certificates), the same
 #      hash-pinned certificate set as the incident site's Block-EmudhraCompromisedCA.ps1. It does not touch
 #      Trusted Root Certification Authorities, so legitimate sites keep working.
-#   2. Removes AAA Certificate Services and emSign ECC Root CA - G3 from the cacerts of each JDK found
-#      (no fixed JDK exists yet).
+#   2. Removes AAA Certificate Services and emSign ECC Root CA - G3 from the cacerts of each JDK that still
+#      trusts a compromised chain. Patched JDKs block the intermediates in blocked.certs instead and are
+#      left alone; upgrading a JDK is the better fix.
 #   3. Reports, without changing, a policy that disables automatic root updates.
 #
 # Usage: powershell.exe -NoProfile -ExecutionPolicy Bypass -File admin-fix-windows.ps1 [-DryRun]
@@ -38,9 +39,13 @@ foreach ($c in $certs) {
     Write-Host "   blocked: $label"
 }
 
-Write-Host '== 2. JDK cacerts (no fixed JDK yet: https://ops.java/emudhra)'
+Write-Host "== 2. JDK cacerts, for JDKs that are not patched (fixed releases: $RemJdkFixed)"
+$net = $false
+try { $r = [System.Net.WebRequest]::Create($RemControl); $r.Timeout = 20000; $r.GetResponse().Close(); $net = $true } catch { }
 foreach ($j in (Get-RemJdkHomes)) {
     $cac = Get-RemCacerts $j; if (-not $cac) { continue }
+    $verdict = Get-RemJdkVerdict $j $net
+    if ($verdict.Pass) { Write-Host "   ${j}: already safe ($($verdict.Detail))"; continue }
     $k = Join-Path $j 'bin\keytool.exe'
     $bad = @(Get-RemBadAliases $k $cac)
     if ($bad.Count -eq 0) { Write-Host "   ${j}: already fixed"; continue }
@@ -56,7 +61,7 @@ foreach ($j in (Get-RemJdkHomes)) {
         Write-Host "   ${j}: removed $($removed -join ', ')"
     }
 }
-Write-Host '   Upgrading a JDK can bring the roots back; run this script again after JDK upgrades.'
+Write-Host '   Upgrading to a patched JDK is the better fix. An upgrade to an older, unpatched JDK brings the roots back.'
 
 Write-Host '== 3. Automatic root certificate updates'
 $pol = Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\SystemCertificates\AuthRoot' -ErrorAction SilentlyContinue

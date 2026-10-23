@@ -15,7 +15,7 @@ compatibility: >-
   Needs an agent with a shell tool on the computer being fixed. macOS and Linux need bash and curl; Windows
   needs Windows PowerShell 5.1 or later. Network access is required for the live checks.
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   tags: "security, incident-response, tls, certificates, trust-store, endpoint"
   repository: "https://github.com/adamzr/remediate-emudhra-on-my-machine"
 ---
@@ -45,13 +45,13 @@ These override any instinct to move faster.
    > **Command:** `bash ".../scripts/fix-python-env.sh" ~/.pyenv/versions/3.12.12/bin/python3`
    > OK to run it?
 
-4. **Back up and log.** Vetted scripts back up and log themselves. Before an improvised or recipe action changes a file, copy it into `~/.remediate-emudhra/backups/` (Windows: `%USERPROFILE%\.remediate-emudhra\backups\`). After it, append to `actions.log` in that folder with `rem_log` (from `scripts/lib.sh`) or `Write-RemLog` (from `scripts/lib.ps1`), always including an exact undo command. The log format is: time, source, action, detail, undo. Writing the backup and the log entry is part of the action the user approved; don't ask separately for it. To reverse changes, replay the undo commands newest first.
+4. **Back up and log.** Vetted scripts back up and log themselves. Before an improvised or recipe action changes a file, copy it into the `backups` folder of the state folder: `~/.remediate-emudhra/` (Windows: `%USERPROFILE%\.remediate-emudhra\`), or `REMEDIATE_EMUDHRA_STATE_DIR` when set. After it, append to `actions.log` in that folder with `rem_log` (from `scripts/lib.sh`) or `Write-RemLog` (from `scripts/lib.ps1`), always including an exact undo command. The log format is: time, source, action, detail, undo. Writing the backup and the log entry is part of the action the user approved; don't ask separately for it. To reverse changes, replay the undo commands newest first.
 5. **Never run sudo or an elevated PowerShell from the agent.** Admin steps are done by the user in their own terminal, guided by `references/terminal-walkthrough.md`.
 6. **Never weaken security to get past an error.** That includes disabling TLS verification, `--break-system-packages`, removing Windows root certificates, and killing processes by name. The full list is at the end of `references/fix-recipes.md`.
 7. **Don't uninstall anything or change anything outside this incident** unless the user asks for that specific thing separately.
 8. **When unsure, stop and ask.** If the user seems unsure, slow down, explain more, and offer to skip that item and record it as open.
 
-**Find this skill's folder once, at the start.** `SKILL_DIR` is the directory that contains this `SKILL.md`. Claude Code states it when the skill loads ("Base directory for this skill"); other agents know the path they read this file from. Use that path. Never search the disk for it; if it is unknown, ask the user.
+**Find this skill's folder once, at the start.** `SKILL_DIR` is the directory that contains this `SKILL.md`. Claude Code states it when the skill loads ("Base directory for this skill"); other agents know the path they read this file from. Never search the disk for it; if it is unknown, ask the user. Most agents do not keep shell variables between commands, so write that absolute path into every command where this skill shows `$SKILL_DIR`, rather than setting a variable once. Forward slashes work in paths on every OS, including in PowerShell.
 
 **Project folders.** The check looks for project virtualenvs and lock files in whichever of `~/Development`, `~/dev`, `~/src`, `~/code`, `~/projects`, `~/repos`, `~/git`, and `~/workspace` exist (on Windows, under the user folder, plus `source\repos`). If it reports `INFO|projects|none`, or the user keeps code elsewhere, ask where, and run the check with `REMEDIATE_EMUDHRA_PROJECTS` set to those folders (separated by `:` on macOS and Linux, `;` on Windows).
 
@@ -66,7 +66,7 @@ Briefly explain the background and these ground rules. Say how long it usually t
 Ask once, then run:
 
 - macOS/Linux: `bash "$SKILL_DIR/scripts/check.sh"`
-- Windows: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$SKILL_DIR\scripts\check.ps1"`
+- Windows: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$SKILL_DIR/scripts/check.ps1"`
 
 It changes nothing on the system and saves its report under the state folder. Each line is `STATUS|AREA|ITEM|DETAIL`. Summarize the results for the user in a short table grouped as **needs fixing** (FAIL), **worth knowing** (WARN), and **fine** (PASS). Keep INFO lines for the end.
 
@@ -88,7 +88,7 @@ Work through the FAIL lines in this order, one action at a time, each using the 
 1. Python interpreters, with `scripts/fix-python-env.sh` or `.ps1` (vetted script), then project virtualenvs as one listed batch. If uv FAILs, upgrade it (item 4) first, because the fix script uses `uv pip` for uv-created virtualenvs.
 2. Node.js: install the fixed release on the same line and make it the default.
 3. Git on Windows: switch to the Windows certificate store.
-4. Go, uv, rustup, Deno, and Homebrew's `ca-certificates` and `certifi`.
+4. Go, uv, rustup, Deno, Bun, conda, mise, pixi, Claude Code, and Homebrew's `ca-certificates` and `certifi`. A Java FAIL is fixed best by upgrading that JDK (see Java in `references/fix-recipes.md`); the admin step covers JDKs the user can't upgrade yet.
 5. Lock files that pin an old certifi (`WARN|lockfile`): one repository at a time, only for repositories the user works on, and only once uv PASSes.
 
 Every `brew upgrade` follows the Homebrew rules in `references/fix-recipes.md`: dry run first, then the two variables that keep old kegs and stop Homebrew from upgrading unrelated dependents.
@@ -122,7 +122,7 @@ When the user says done, run the check again (same approval rule as step 2) and 
 
 ### 6. Things only the user can do
 
-List what remains outside the agent, from the last section of `references/fix-recipes.md`: OS updates (macOS 15.8+, 26.7+, or 27; Windows Update; the Linux package manager), browser updates and the two test URLs, app updates, and phones (iOS 26.7+ or 27; restart Android). Ask them to open the two test URLs in each browser now and tell you whether both show a certificate error.
+List what remains outside the agent, from the last section of `references/fix-recipes.md`: OS updates (macOS 15.8+, 26.7+, or 27; Windows Update; the Linux package manager), browser updates and the four test URLs, app updates, and phones (iOS 26.7+ or 27; restart Android). Ask them to open the four test URLs from the check's `INFO|browsers` line in each browser now (two of them use chains never logged to Certificate Transparency, which some browser blocks rely on) and tell you whether all four show a certificate error.
 
 ### 7. Summarize, and report problems with the skill
 
@@ -154,7 +154,7 @@ End by telling the user where the action log and backups are, and that `actions.
 - **On Arch, the package update is a full system upgrade.** Arch does not support partial upgrades, so the admin script runs `pacman -Syu`. Say so before the user runs it, and offer the dry run.
 - **Windows virtualenvs use `Lib\site-packages` and `Scripts\python.exe`**, not `lib/python3.X/site-packages` and `bin/python`. The virtualenv recipe matches both.
 - **An Xcode or Command Line Tools update** can remove the `PIP_CERT` line the macOS admin script adds. Re-running the admin script restores it.
-- **Upgrading a JDK restores the two roots** until a fixed JDK ships. Tell Java users to re-run the admin script after JDK upgrades.
+- **Patched JDKs keep the roots in `cacerts`.** Their fix is in `blocked.certs`, so the check tests JDKs live instead of looking for the roots, and the admin script leaves patched JDKs alone. For a JDK that FAILs, upgrading it to the fixed release on its line is better than the admin script's root removal; installing an older, unpatched JDK brings the roots back.
 - **A python.org Python that "cannot verify any site"** is broken but not exposed. Optional to fix.
 - **Pasting into terminals:** Command+V on macOS, Ctrl+Shift+V in Linux terminals, and right-click in Windows PowerShell.
 

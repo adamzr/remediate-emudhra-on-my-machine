@@ -17,7 +17,9 @@
 #   2. Only if the system store still trusts a compromised chain: blocklists the emSign root and runs
 #      update-ca-trust, as the incident site prescribes. If the AAA chain is still trusted after that, it
 #      also blocklists the AAA root, which goes beyond the site's Arch command (the site blocks it on Fedora).
-# All of the above: 3. Removes the two roots from any JDK cacerts found (no fixed JDK exists yet).
+# All of the above: 3. Removes the two roots from the cacerts of any JDK that still trusts a compromised
+#    chain. Patched JDKs (27.0.1.0.2, 25.0.5.0.2, 21.0.13.0.2, 17.0.21.0.2, 11.0.33.0.2, 8u511) block the
+#    intermediates in blocked.certs instead and are left alone; upgrading a JDK is the better fix.
 # NixOS: changes nothing. Prints the configuration.nix setting and the rebuild command to apply yourself.
 # Anything else: changes nothing and points to the manual steps.
 #
@@ -195,7 +197,7 @@ elif trusts_bad_chain; then
     sudo update-ca-trust ;;
   arch)
     command -v trust >/dev/null || { echo "   STOP: the trust command (p11-kit) is missing. Install p11-kit and run this again." >&2; exit 2; }
-    d=/etc/ca-certificates/trust-source/blocklist
+    d=/etc/ca-certificates/trust-source/blocklist; [ -d "$d" ] || [ ! -d /etc/ca-certificates/trust-source/blacklist ] || d=/etc/ca-certificates/trust-source/blacklist
     blocklist_root "$d" "emSign ECC Root CA - G3" emSign_ECC_Root_CA_-_G3.pem
     sudo update-ca-trust
     if trusts_url "$REM_BAD_AAA"; then
@@ -209,10 +211,13 @@ else
   echo "   not needed: the system store already rejects both chains"
 fi
 
-echo "== 3. JDK cacerts (no fixed JDK yet: https://ops.java/emudhra)"
+echo "== 3. JDK cacerts, for JDKs that are not patched (fixed releases: $REM_JDK_FIXED)"
+NET=0; curl -sS -o /dev/null -m 20 "$REM_CONTROL" 2>/dev/null && NET=1
 rem_jdk_homes | while IFS= read -r J; do
   C="$(rem_cacerts "$J")" || continue
   K="$J/bin/keytool"; [ -x "$K" ] || continue
+  # A patched JDK (or one blocked by hand) is left alone: its fix is in blocked.certs, not cacerts.
+  case "$(rem_jdk_verdict "$J" "$NET")" in pass\|*) echo "   $J: already safe ($(rem_jdk_verdict "$J" "$NET" | sed 's/^pass|//'))"; continue ;; esac
   aliases="$(rem_bad_aliases "$K" "$C")"
   [ -n "$aliases" ] || { echo "   $J: already fixed"; continue; }
   if [ "$DRY" = 1 ]; then echo "   would remove from $C: $(echo "$aliases" | tr '\n' ',')"; continue; fi

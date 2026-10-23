@@ -22,13 +22,13 @@ Each recipe is a **vetted recipe**: the exact command was reviewed as part of th
 Before running a recipe, record what it replaces (the old version or old setting) so the undo in the log is exact. After running it, append a line to the action log:
 
 - macOS/Linux (works from bash or zsh): `bash -c '. "$1/scripts/lib.sh" && rem_log vetted-recipe "$2" "$3" "$4"' _ "$SKILL_DIR" "<action>" "<old -> new>" "<undo command>"`
-- Windows (PowerShell): `. "$SKILL_DIR\scripts\lib.ps1"; Write-RemLog vetted-recipe "<action>" "<old -> new>" "<undo command>"`
+- Windows (PowerShell): `. "$SKILL_DIR/scripts/lib.ps1"; Write-RemLog vetted-recipe "<action>" "<old -> new>" "<undo command>"`
 
 `SKILL_DIR` is this skill's folder, the one that contains `SKILL.md`.
 
 ## Fixed versions
 
-Developer tools are from https://emudhra.we-have-a-problem.com/ (October 21, 2026). Operating systems are noted separately below the table.
+Developer tools are from https://emudhra.we-have-a-problem.com/ as of October 22, 2026; the site keeps adding fixed releases, so check it when a tool is not listed here. Operating systems are noted separately below the table.
 
 | Component | Minimum fixed version |
 |---|---|
@@ -45,9 +45,16 @@ Developer tools are from https://emudhra.we-have-a-problem.com/ (October 21, 202
 | Arch `ca-certificates-mozilla` | 3.131.1-1 |
 | NixOS `cacert` | 3.131.1 |
 | Electron | 44.9.1, 43.8.1, or 42.11.16 (apps update themselves) |
-| Java, Bun | No fix yet |
+| Java (OpenJDK, Oracle) | 27.0.1.0.2, 25.0.5.0.2, 21.0.13.0.2, 17.0.21.0.2, 11.0.33.0.2, or 8u511 |
+| Bun | 1.4.4 |
+| conda | 26.9.4 |
+| mise | 2026.10.17 |
+| pixi | 0.82.1 |
+| Claude Code | 2.1.303 |
+| Docker Desktop | 4.96.2 (the user updates it) |
+| Python (CPython) | 3.15.1, 3.14.9, or 3.13.17 (the check warns on older releases of those lines) |
 
-Operating systems: the incident site says only that Apple blocked the certificates on October 19 and Microsoft on October 20 through automatic updates, and that users should update. Apple has not said which versions carry its block; a separate Apple certificate fix published before this incident ([CVE-2026-86881](https://app.opencve.io/cve/CVE-2026-86881), certificates issued by compromised intermediates) shipped in macOS 15.8, 26.7, and 27 and iOS 26.7 and 27, so recommend those as the target. Google pushed the Android block through Google Play Services on October 20; a restart applies it ([Google](https://blog.google/security/protecting-chrome-and-android-users-from-compromised-emudhra-intermediate-ca-certificates/)). On Linux, the distribution's own `ca-certificates` update is the preferred fix; the admin script installs it first and applies the incident site's workaround only if the system store still trusts a compromised chain afterwards.
+Operating systems: the incident site says only that Apple has blocked the certificates since October 22, Microsoft since October 20, and Chrome and Firefox since October 17, through automatic updates, and that users should update. Apple has not said which versions carry its block; a separate Apple certificate fix published before this incident ([CVE-2026-86881](https://app.opencve.io/cve/CVE-2026-86881), certificates issued by compromised intermediates) shipped in macOS 15.8, 26.7, and 27 and iOS 26.7 and 27, so recommend those as the target. Google pushed the Android block through Google Play Services on October 20; a restart applies it ([Google](https://blog.google/security/protecting-chrome-and-android-users-from-compromised-emudhra-intermediate-ca-certificates/)). On Linux, the distribution's own `ca-certificates` update is the preferred fix; the admin script installs it first and applies the incident site's workaround only if the system store still trusts a compromised chain afterwards.
 
 ## Homebrew upgrades
 
@@ -66,7 +73,7 @@ Undo: `brew unlink <formula>`, then `brew link` the old keg path under `$(brew -
 bash "$SKILL_DIR/scripts/fix-python-env.sh" /path/to/python
 ```
 
-Windows: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$SKILL_DIR\scripts\fix-python-env.ps1" -Python C:\path\to\python.exe`
+Windows: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$SKILL_DIR/scripts/fix-python-env.ps1" -Python C:\path\to\python.exe`
 
 It logs its own undo. It also handles uv-created virtualenvs, which have no pip, by upgrading certifi with `uv pip`. Exit code 3 means it deliberately skipped the interpreter and printed the right command instead; offer that command as a vetted recipe (never one that needs sudo). Exit code 4 means the environment is still vulnerable and could not be fixed; report it as open. In a conda environment, exit 3 can follow a partial pip upgrade: the action log records what pip changed, and the printed conda command covers the rest.
 
@@ -75,7 +82,7 @@ It logs its own undo. It also handles uv-created virtualenvs, which have no pip,
 **conda environments** (base and named, including mamba and micromamba): run the vetted fix script on the environment's python, like any other interpreter. It upgrades each package with whatever installed the copy Python actually imports, read from that package's `INSTALLER` file (a `conda-meta/` record alone can be stale after pip replaced the package):
 - **Installed by pip** (common in older environments): upgraded with the environment's own pip, and logged with an undo.
 - **Installed by conda:** left alone. The script prints `conda install -p <env prefix> 'certifi>=2026.10.19'` (plus `'pip>=26.2.2'` when needed) and exits 3; offer that as a vetted recipe. It uses `conda install` with a minimum version because that fails loudly if the channel can't provide it, while `conda update` can report success and change nothing. Undo: `conda install -p <env prefix> certifi=<old>`, adding `pip=<old>` if pip was upgraded.
-- **Python below 3.10:** the fixed certifi needs Python 3.10 or later, so neither conda nor pip can install it. The script exits 4. Record the environment as open, and suggest retiring it or rebuilding it on Python 3.10 or later.
+- **conda-owned certifi on Python below 3.10:** conda's build of the fixed certifi needs Python 3.10 or later, so conda cannot install it there (it would report success and change nothing). The script exits 4. Record the environment as open, and suggest retiring it or rebuilding it on Python 3.10 or later.
 
 **uv-managed Python:** `uv python upgrade 3.X`. Undo: `uv python install 3.X.Y` for the old patch version.
 
@@ -108,7 +115,7 @@ Recipe, one action per repository: back up `uv.lock` to the backups folder, then
 
 ## Node.js
 
-Install the fixed release on the same line (22, 24, or 26), make it the default, and leave old versions installed until the user decides. A project's `.nvmrc` may pin an old version; check `grep -rl --include=.nvmrc . "${REM_DEV_DIR:-$HOME/Development}" 2>/dev/null` before suggesting removal.
+Install the fixed release on the same line (22, 24, or 26), make it the default, and leave old versions installed until the user decides. A project's `.nvmrc` may pin an old version; check `bash -c '. "$1/scripts/lib.sh"; rem_project_dirs | while IFS= read -r d; do find "$d" -maxdepth 3 -name .nvmrc; done' _ "<SKILL_DIR>"` before suggesting removal.
 
 | Manager | Command | Undo |
 |---|---|---|
@@ -148,7 +155,11 @@ Undo: `git config --global http.sslBackend <old>`, or `git config --global --uns
 
 ## Java
 
-No fixed JDK exists yet (https://ops.java/emudhra). The admin script for each OS removes the two affected roots from every JDK's `cacerts`, backing each file up first. A JDK owned by the user (sdkman, `~/.jdks`, Homebrew) can be fixed without the admin script by running the same steps, but prefer the admin script so everything lands in one reviewed place.
+Fixed releases exist: 27.0.1.0.2, 25.0.5.0.2, 21.0.13.0.2, 17.0.21.0.2, 11.0.33.0.2, and 8u511 ([OpenJDK advisory](https://openjdk.org/groups/vulnerability/advisories/2026-10-21), [Oracle](https://ops.java/emudhra)). A patched JDK blocks the compromised intermediates in `lib/security/blocked.certs` (`blacklisted.certs` on JDK 8); it keeps the roots in `cacerts`.
+
+The check tests each JDK live against the test hosts when it can (JDK 11 or later, with network access). Otherwise it treats a JDK as safe when `blocked.certs` lists all 16 compromised intermediates, or when `cacerts` no longer has the two affected roots.
+
+For a FAIL, **upgrading the JDK to the fixed release on its line is the preferred fix**: through the JDK's own installer or manager (`sdk install java <version>`, Homebrew, the vendor's installer, or the OS package manager). The user runs installers themselves. Until then, the admin script for each OS removes the two affected roots from that JDK's `cacerts`, backing the file up first; it leaves patched JDKs alone. A JDK the user owns (sdkman, `~/.jdks`, Homebrew) could be fixed without the admin script, but prefer the admin script so everything lands in one reviewed place.
 
 ## System trust store
 
