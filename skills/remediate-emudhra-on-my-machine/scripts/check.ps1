@@ -222,6 +222,7 @@ function Test-RemTool($area, $name, $exe, [string[]]$versionArgs, $field, $fixed
     if (-not $cmd) { return }
     $v = (@(Invoke-RemNative $cmd.Source $versionArgs) | Select-Object -First 1) -split '\s+' | Select-Object -Index $field
     $vv = ($v -replace '^v', '') -replace '[^0-9.].*$', ''
+    if ($vv -notmatch '^\d') { Emit WARN $area $name "installed, but its version could not be read (fixed: $fixed)"; return }
     $ok = $false; try { $ok = [version]$vv -ge [version]$fixed } catch { }
     if ($ok) { Emit PASS $area $name "$name $v" } else { Emit FAIL $area $name "$name $v (fixed: $fixed)" }
 }

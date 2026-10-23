@@ -330,7 +330,10 @@ if command -v deno >/dev/null; then
   if rem_ver_ge "$v" 2.9.8; then emit PASS deno deno "Deno $v"; else emit FAIL deno deno "Deno $v (fixed: 2.9.8)"; fi
 fi
 # tool_ver AREA NAME FIXED VERSION -> PASS or FAIL line for a tool with one fixed release.
-tool_ver() { if rem_ver_ge "$4" "$3"; then emit PASS "$1" "$2" "$2 $4"; else emit FAIL "$1" "$2" "$2 $4 (fixed: $3)"; fi; }
+tool_ver() {
+  case "$4" in [0-9]*) ;; *) emit WARN "$1" "$2" "installed, but its version could not be read (fixed: $3)"; return ;; esac
+  if rem_ver_ge "$4" "$3"; then emit PASS "$1" "$2" "$2 $4"; else emit FAIL "$1" "$2" "$2 $4 (fixed: $3)"; fi
+}
 if command -v bun >/dev/null; then tool_ver bun bun 1.4.4 "$(bun --version 2>/dev/null)"; fi
 if command -v conda >/dev/null; then tool_ver conda conda 26.9.4 "$(conda --version 2>/dev/null | awk '{print $2}')"; fi
 if command -v mise >/dev/null; then tool_ver mise mise 2026.10.17 "$(mise --version 2>/dev/null | awk '{print $1}')"; fi

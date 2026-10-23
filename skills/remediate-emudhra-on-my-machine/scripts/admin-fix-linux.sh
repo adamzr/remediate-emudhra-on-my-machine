@@ -217,7 +217,8 @@ rem_jdk_homes | while IFS= read -r J; do
   C="$(rem_cacerts "$J")" || continue
   K="$J/bin/keytool"; [ -x "$K" ] || continue
   # A patched JDK (or one blocked by hand) is left alone: its fix is in blocked.certs, not cacerts.
-  case "$(rem_jdk_verdict "$J" "$NET")" in pass\|*) echo "   $J: already safe ($(rem_jdk_verdict "$J" "$NET" | sed 's/^pass|//'))"; continue ;; esac
+  verdict="$(rem_jdk_verdict "$J" "$NET")"
+  case "$verdict" in pass\|*) echo "   $J: already safe (${verdict#pass|})"; continue ;; esac
   aliases="$(rem_bad_aliases "$K" "$C")"
   [ -n "$aliases" ] || { echo "   $J: already fixed"; continue; }
   if [ "$DRY" = 1 ]; then echo "   would remove from $C: $(echo "$aliases" | tr '\n' ',')"; continue; fi

@@ -58,7 +58,7 @@ py310=0; if [ "$major" -gt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -ge 10 ]; }
 # In a conda environment, upgrade each package with whatever installed the copy Python imports. Its
 # dist-info INSTALLER file says "conda" or "pip"; a conda-meta record alone can be stale, because pip
 # can replace a conda package and leave the record behind. Without an INSTALLER file, fall back to it.
-conda_pkgs=""; skip_pip=0; skip_certifi=0
+conda_pkgs=""; conda_channel=""; skip_pip=0; skip_certifi=0
 if [ -n "$conda" ]; then
   conda_owned() { # NAME INSTALLER
     if [ -n "$2" ]; then [ "$2" = conda ]; else ls "$prefix/conda-meta/$1"-[0-9]*.json >/dev/null 2>&1; fi
@@ -70,11 +70,13 @@ if [ -n "$conda" ]; then
   if [ -n "$old_certifi" ] && conda_owned certifi "$certifi_inst"; then
     skip_certifi=1
     if ! rem_ver_ge "$old_certifi" 2026.10.19; then
-      # conda's build of the fixed certifi needs Python 3.10+ (the PyPI one needs only 3.7), so conda
-      # cannot install it here; it would report success
-      # and change nothing.
-      if [ "$py310" = 0 ]; then
-        echo "FAIL: certifi $old_certifi in $PY is vulnerable, and conda's build of the fixed certifi needs Python 3.10 or later (this is $pyver). Retire this environment, or rebuild it on Python 3.10 or later."
+      # conda's builds of the fixed certifi need Python 3.10+ on the defaults channel and 3.11+ on
+      # conda-forge (the PyPI one needs only 3.7). Below that, conda cannot install it: it fails, or it
+      # offers to upgrade Python itself, which is far beyond this fix.
+      floor=3.10
+      if grep -qs 'conda-forge' "$prefix"/conda-meta/certifi-[0-9]*.json; then floor=3.11; conda_channel="-c conda-forge "; fi
+      if ! rem_ver_ge "$pyver" "$floor"; then
+        echo "FAIL: certifi $old_certifi in $PY is vulnerable, and conda's build of the fixed certifi for this channel needs Python $floor or later (this is $pyver). Retire this environment, or rebuild it on Python $floor or later."
         exit 4
       fi
       conda_pkgs="${conda_pkgs:+$conda_pkgs }'certifi>=2026.10.19'"
@@ -83,11 +85,11 @@ if [ -n "$conda" ]; then
 fi
 # conda_advice -> prints the conda command for the conda-owned packages, if any, and exits 3. It uses
 # conda install with a minimum version, which fails loudly if conda cannot reach it (conda update can
-# report success and change nothing).
+# report success and change nothing), and pins the Python version so conda never upgrades Python.
 conda_advice() {
   [ -n "$conda_pkgs" ] || return 0
   echo "SKIP: conda installed these in this environment, so upgrade them with conda to keep the environment consistent:"
-  echo "  conda install -p $(rem_q "$prefix") $conda_pkgs"
+  echo "  conda install ${conda_channel}-p $(rem_q "$prefix") $conda_pkgs 'python=$pyver'"
   exit 3
 }
 if [ "$managed" = managed ]; then

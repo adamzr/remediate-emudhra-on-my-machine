@@ -35,7 +35,7 @@ function Test-Old($v, $fixed) { try { return [version]$v -lt [version]$fixed } c
 # In a conda environment, upgrade each package with whatever installed the copy Python imports. Its
 # dist-info INSTALLER file says "conda" or "pip"; a conda-meta record alone can be stale, because pip
 # can replace a conda package and leave the record behind. Without an INSTALLER file, fall back to it.
-$condaPkgs = @(); $skipPip = $false; $skipCertifi = $false
+$condaPkgs = @(); $condaChannel = ''; $skipPip = $false; $skipCertifi = $false
 if ($conda) {
     $meta = @(Get-ChildItem (Join-Path $prefix 'conda-meta') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
     function Test-CondaOwned($name, $installer) { if ($installer) { return $installer -eq 'conda' } else { return [bool]($meta -match "^$name-\d") } }
@@ -46,8 +46,12 @@ if ($conda) {
     if ($oldCertifi -and (Test-CondaOwned 'certifi' $certifiInst)) {
         $skipCertifi = $true
         if (Test-Old $oldCertifi '2026.10.19') {
-            # conda's build of the fixed certifi needs Python 3.10+ (the PyPI one needs only 3.7), so conda cannot install it here; it would report success and change nothing.
-            if (-not $py310) { Write-Host "FAIL: certifi $oldCertifi in $Python is vulnerable, and conda's build of the fixed certifi needs Python 3.10 or later (this is $pyver). Retire this environment, or rebuild it on Python 3.10 or later."; exit 4 }
+            # conda's builds of the fixed certifi need Python 3.10+ on the defaults channel and 3.11+ on conda-forge (the PyPI one
+            # needs only 3.7). Below that, conda cannot install it: it fails, or it offers to upgrade Python itself.
+            $floor = '3.10'
+            $rec = @(Get-ChildItem (Join-Path $prefix 'conda-meta') -Filter 'certifi-*.json' -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^certifi-\d' })
+            if ($rec -and (Select-String -Path $rec[0].FullName -Pattern 'conda-forge' -SimpleMatch -Quiet)) { $floor = '3.11'; $condaChannel = '-c conda-forge ' }
+            if ([version]$pyver -lt [version]$floor) { Write-Host "FAIL: certifi $oldCertifi in $Python is vulnerable, and conda's build of the fixed certifi for this channel needs Python $floor or later (this is $pyver). Retire this environment, or rebuild it on Python $floor or later."; exit 4 }
             $condaPkgs += '"certifi>=2026.10.19"'
         }
     }
@@ -55,7 +59,7 @@ if ($conda) {
 function Show-CondaAdvice {
     if ($condaPkgs.Count -eq 0) { return }
     Write-Host 'SKIP: conda installed these in this environment, so upgrade them with conda to keep the environment consistent:'
-    Write-Host "  conda install -p `"$prefix`" $($condaPkgs -join ' ')"
+    Write-Host "  conda install $condaChannel-p `"$prefix`" $($condaPkgs -join ' ') `"python=$pyver`""
     exit 3
 }
 
